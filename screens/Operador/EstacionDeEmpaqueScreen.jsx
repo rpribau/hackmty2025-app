@@ -1,31 +1,37 @@
-import React, { useState, useEffect, Suspense } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
+import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
   ActivityIndicator,
-  Modal,
-  SafeAreaView // <-- Importar SafeAreaView
+  Modal as RNModal,
+  SafeAreaView
 } from 'react-native';
-// Temporarily use 2D fallback
-import Trolley2D from '../../components/Trolley2D';
-// import { Canvas } from '@react-three/fiber/native';
-// import Trolley3D from '../../components/Trolley3D';
+import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+
+// --- ¡IMPORTS 3D! ---
+import { Canvas } from '@react-three/fiber/native';
+import Trolley3D from '../../components/Trolley3D'; // ¡El componente 3D real!
+
+// --- Tus Imports ---
 import { getPackingJob } from '../../api/mockapi';
-import { Package, Clock, ScanLine, Check, Maximize2, X } from 'lucide-react-native';
+import { Package, Clock, ScanLine, Check, Maximize2, X, ChevronUp, ChevronDown } from 'lucide-react-native';
 import FeedbackModal from '../../components/FeedbackModal';
 
 export default function EstacionDeEmpaqueScreen({ navigation }) {
+  // ... (Todos tus 'useState' y 'useRef' de BottomSheet están perfectos) ...
   const [job, setJob] = useState(null);
   const [currentDrawer, setCurrentDrawer] = useState(null);
   const [drawerStates, setDrawerStates] = useState({});
   const [timer, setTimer] = useState(0);
   const [modal, setModal] = useState({ isVisible: false, type: '', message: '' });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const bottomSheetRef = useRef(null);
+  const snapPoints = useMemo(() => ['25%', '90%'], []);
+  const [isSheetExpanded, setIsSheetExpanded] = useState(false);
 
-  // ... (useEffects y funciones sin cambios) ...
+  // ... (Tus 'useEffect' y funciones 'formatTime' están perfectos) ...
   useEffect(() => {
     getPackingJob().then(data => {
       setJob(data);
@@ -52,9 +58,11 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
   };
 
+  // ... (Tus 'handleSelectDrawer' y 'handleScanLote' están perfectos) ...
   const handleSelectDrawer = (drawer) => {
     if (drawerStates[drawer.id] === 'pending') {
       setCurrentDrawer(drawer);
+      bottomSheetRef.current?.snapToIndex(1);
     }
   };
 
@@ -66,7 +74,12 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
     });
     setDrawerStates(prev => ({ ...prev, [currentDrawer.id]: 'completed' }));
     setCurrentDrawer(null);
+    bottomSheetRef.current?.snapToIndex(0);
   };
+
+  const handleSheetChanges = useCallback((index) => {
+    setIsSheetExpanded(index === 1);
+  }, []);
 
   if (!job) {
     return (
@@ -79,147 +92,161 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
 
   // --- UI Principal ---
   return (
-    // Usamos SafeAreaView para evitar que se encime con la barra de estado/notch
     <SafeAreaView style={styles.container}>
-      <FeedbackModal 
+      <FeedbackModal
         isVisible={modal.isVisible}
         type={modal.type}
         message={modal.message}
         onClose={() => setModal({ isVisible: false, type: '', message: '' })}
       />
 
-      {/* Modal de pantalla completa (2D fallback) */}
-      <Modal
+      {/* Modal de pantalla completa (¡AHORA MUESTRA EL 3D!) */}
+      <RNModal
         visible={isFullscreen}
         transparent={false}
         animationType="slide"
         onRequestClose={() => setIsFullscreen(false)}
       >
         <SafeAreaView style={styles.fullscreenContainer}>
-          <Trolley2D drawerStates={drawerStates} />
-          {/* Botón para cerrar la pantalla completa */}
-          <TouchableOpacity 
-            style={styles.closeFullscreenButton} 
+          {/* Canvas 3D en Pantalla Completa */}
+          <Suspense fallback={<ActivityIndicator size="large" color="#3b82f6" />}>
+            <Canvas>
+              <Trolley3D drawerStates={drawerStates} isFullscreen={true} />
+            </Canvas>
+          </Suspense>
+
+          <TouchableOpacity
+            style={styles.closeFullscreenButton}
             onPress={() => setIsFullscreen(false)}
           >
             <X color="#111827" size={30} />
           </TouchableOpacity>
         </SafeAreaView>
-      </Modal>
+      </RNModal>
 
-      {/* 1. Encabezado */}
+      {/* 1. Encabezado (Superpuesto) */}
       <View style={styles.header}>
-        <Package color="#111827" size={30} />
         <View>
           <Text style={styles.headerTitle}>Vuelo: {job.vuelo}</Text>
           <Text style={styles.headerSubtitle}>Destino: {job.destino}</Text>
         </View>
-      </View>
-
-      {/* 2. Tarjeta de Tiempos */}
-      <View style={styles.timerCard}>
-        <View style={styles.timerBox}>
-          <Text style={styles.timerLabel}>Tiempo Estándar (μ)</Text>
-          <Text style={styles.timerText}>{formatTime(job.tiempoEstandar)}</Text>
-        </View>
-        <View style={[styles.timerBox, styles.timerBoxHighlight]}>
-          <Text style={styles.timerLabel}>Tu Tiempo</Text>
-          <Text style={styles.timerText}>{formatTime(timer)}</Text>
-        </View>
-      </View>
-
-      {/* 3. Visualizador del Carrito (¡AHORA FLEXIBLE!) */}
-      <View style={styles.canvasContainer}>
-        <Trolley2D drawerStates={drawerStates} />
-        {/* Botón de Fullscreen */}
-        <TouchableOpacity 
-          style={styles.fullscreenButton} 
+        <TouchableOpacity
+          style={styles.fullscreenButton}
           onPress={() => setIsFullscreen(true)}
         >
           <Maximize2 color="#111827" size={20} />
         </TouchableOpacity>
       </View>
 
-      {/* 4. Lista de Tareas / Acción (¡AHORA FLEXIBLE!) */}
-      <View style={styles.taskContainer}>
-        {!currentDrawer ? (
-          // --- Vista de Lista de Cajones ---
-          <>
-            <Text style={styles.taskTitle}>Cajones Pendientes</Text>
-            <ScrollView>
-              {job.cajones.map((drawer) => (
-                <TouchableOpacity 
-                  key={drawer.id} 
-                  style={[
-                    styles.drawerItem, 
-                    drawerStates[drawer.id] === 'completed' && styles.drawerItemCompleted
-                  ]}
-                  onPress={() => handleSelectDrawer(drawer)}
-                >
-                  <View style={[
-                    styles.drawerIcon,
-                    drawerStates[drawer.id] === 'completed' && styles.drawerIconCompleted
-                  ]}>
-                    {drawerStates[drawer.id] === 'completed' ? 
-                      <Check color="#16a34a" size={24} /> :
-                      <Clock color="#6b7280" size={24} />
-                    }
-                  </View>
-                  <View>
-                    <Text style={styles.drawerName}>{drawer.nombre}</Text>
-                    <Text style={styles.drawerContent}>{drawer.contenido}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </>
-        ) : (
-          // --- Vista de Acción de Escaneo ---
-          <View style={styles.scanActionContainer}>
-            <Text style={styles.scanTitle}>Acción Requerida</Text>
-            <Text style={styles.scanSubtitle}>
-              Escanear Lote (FEFO) para: <Text style={{fontWeight: 'bold'}}>{currentDrawer.nombre}</Text>
-            </Text>
-            <TouchableOpacity style={styles.scanButton} onPress={handleScanLote}>
-              <ScanLine color="#ffffff" size={30} />
-              <Text style={styles.scanButtonText}>Escanear Lote</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setCurrentDrawer(null)}>
-              <Text style={styles.cancelText}>Volver a la lista</Text>
-            </TouchableOpacity>
+      {/* 2. Visualizador del Carrito (¡AHORA ES 3D!) */}
+      <View style={styles.canvasContainer}>
+        {/* ¡AQUÍ ESTÁ EL CAMBIO! Se fue el Trolley2D y entró el Canvas 3D */}
+        <Suspense fallback={
+          <View style={styles.centered}>
+            <ActivityIndicator size="large" color="#3b82f6" />
+            <Text style={styles.loadingText}>Cargando modelo 3D...</Text>
           </View>
-        )}
+        }>
+          <Canvas>
+            <Trolley3D drawerStates={drawerStates} isFullscreen={false} />
+          </Canvas>
+        </Suspense>
+        
+        {/* Tarjeta de Tiempos (Superpuesta) */}
+        <View style={styles.timerCard}>
+          <View style={styles.timerBox}>
+            <Text style={styles.timerLabel}>Std (μ)</Text>
+            <Text style={styles.timerText}>{formatTime(job.tiempoEstandar)}</Text>
+          </View>
+          <View style={[styles.timerBox, styles.timerBoxHighlight]}>
+            <Text style={styles.timerLabel}>Tu Tiempo</Text>
+            <Text style={styles.timerText}>{formatTime(timer)}</Text>
+          </View>
+        </View>
       </View>
+
+      {/* 3. Panel Deslizable (Bottom Sheet) - Esto ya funciona */}
+      {/* Esta es AHORA la ÚNICA lista de cajones */}
+      <BottomSheet
+        ref={bottomSheetRef}
+        index={0} // Empieza minimizado
+        snapPoints={snapPoints}
+        onChange={handleSheetChanges}
+        handleIndicatorStyle={styles.handleIndicator}
+        backgroundStyle={styles.bottomSheetBackground}
+      >
+        <View style={styles.bottomSheetContentContainer}>
+          <View style={styles.handleChevronContainer}>
+            {isSheetExpanded ? <ChevronDown color="#9ca3af" size={24} /> : <ChevronUp color="#9ca3af" size={24} />}
+          </View>
+
+          {!currentDrawer ? (
+            // --- Vista de Lista de Cajones ---
+            <>
+              <Text style={styles.taskTitle}>Cajones Pendientes</Text>
+              <BottomSheetScrollView contentContainerStyle={styles.scrollContent}>
+                {job.cajones.map((drawer) => (
+                  <TouchableOpacity
+                    key={drawer.id}
+                    style={[
+                      styles.drawerItem,
+                      drawerStates[drawer.id] === 'completed' && styles.drawerItemCompleted
+                    ]}
+                    onPress={() => handleSelectDrawer(drawer)}
+                    disabled={drawerStates[drawer.id] === 'completed'}
+                  >
+                    <View style={[
+                      styles.drawerIcon,
+                      drawerStates[drawer.id] === 'completed' && styles.drawerIconCompleted
+                    ]}>
+                      {drawerStates[drawer.id] === 'completed' ?
+                        <Check color="#16a34a" size={20} /> :
+                        <Clock color="#6b7280" size={20} />
+                      }
+                    </View>
+                    <View style={styles.drawerTextContainer}>
+                      <Text style={styles.drawerName}>{drawer.nombre}</Text>
+                      <Text style={styles.drawerContent}>{drawer.contenido}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </BottomSheetScrollView>
+            </>
+          ) : (
+            // --- Vista de Acción de Escaneo ---
+            <View style={styles.scanActionContainer}>
+              <Text style={styles.scanTitle}>Acción Requerida</Text>
+              <Text style={styles.scanSubtitle}>
+                Escanear Lote (FEFO) para: <Text style={{ fontWeight: 'bold' }}>{currentDrawer.nombre}</Text>
+              </Text>
+              <TouchableOpacity style={styles.scanButton} onPress={handleScanLote}>
+                <ScanLine color="#ffffff" size={24} />
+                <Text style={styles.scanButtonText}>Escanear Lote</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setCurrentDrawer(null)}>
+                <Text style={styles.cancelText}>Volver a la lista</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </BottomSheet>
     </SafeAreaView>
   );
 }
 
+// --- ESTILOS ---
+// (Los estilos son los mismos de la versión "Bottom Sheet"
+// que ya te había pasado, ya que están diseñados para este layout)
 const styles = StyleSheet.create({
-  // --- ¡ESTILOS CORREGIDOS! ---
   container: {
-    flex: 1, // <--- CLAVE: Ocupar toda la pantalla
-    backgroundColor: '#f8fafc',
+    flex: 1,
+    backgroundColor: '#e0e7ff', // Fondo del canvas ahora es el fondo principal
   },
-  canvasContainer: {
-    flex: 0.4, // <--- CLAVE: 40% de la pantalla para el modelo
-    backgroundColor: '#e0e7ff',
-    position: 'relative',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  taskContainer: {
-    flex: 0.6, // <--- CLAVE: 60% de la pantalla para las tareas
-    backgroundColor: '#ffffff',
-    padding: 20,
-    // Se quitó el marginTop: -20 para un layout limpio
-  },
-  // --- FIN DE ESTILOS CORREGIDOS ---
-
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
   },
   loadingText: {
     marginTop: 16,
@@ -227,55 +254,71 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 12, // Menos padding vertical
-    backgroundColor: '#ffffff',
+    paddingTop: 10,
+    paddingBottom: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: 'rgba(229, 231, 235, 0.7)',
+    position: 'absolute',
+    top: 40, // Asume SafeAreaView
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 22, // Ligeramente más pequeño
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#111827',
-    marginLeft: 16,
   },
   headerSubtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#6b7280',
-    marginLeft: 16,
+  },
+  canvasContainer: {
+    flex: 1, // Ocupa todo el espacio disponible
+    position: 'relative',
+    marginTop: 100, // Espacio para el header
+    marginBottom: 50, // Espacio para el timer
   },
   timerCard: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 12, // Menos padding
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    right: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 12,
+    paddingVertical: 8,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    zIndex: 10,
   },
   timerBox: {
+    flex: 1,
     alignItems: 'center',
-    paddingHorizontal: 24,
   },
   timerBoxHighlight: {
     borderLeftWidth: 1,
     borderLeftColor: '#e5e7eb',
   },
   timerLabel: {
-    fontSize: 14, // Ligeramente más pequeño
+    fontSize: 12,
     color: '#6b7280',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   timerText: {
-    fontSize: 26, // Ligeramente más pequeño
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#3b82f6',
   },
   fullscreenButton: {
-    position: 'absolute',
-    bottom: 12,
-    right: 12,
     backgroundColor: 'rgba(255, 255, 255, 0.8)',
     padding: 8,
     borderRadius: 20,
@@ -287,15 +330,46 @@ const styles = StyleSheet.create({
   },
   closeFullscreenButton: {
     position: 'absolute',
-    top: 50, // Asume SafeAreaView
+    top: 50,
     right: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
     padding: 12,
     borderRadius: 24,
     elevation: 4,
+    zIndex: 10,
+  },
+  // --- Estilos del Bottom Sheet ---
+  bottomSheetBackground: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: -4,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 10,
+  },
+  handleIndicator: {
+    backgroundColor: '#d1d5db',
+    width: 40,
+  },
+  bottomSheetContentContainer: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 5,
+  },
+  handleChevronContainer: {
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  scrollContent: {
+    paddingBottom: 30,
   },
   taskTitle: {
-    fontSize: 20, // Ligeramente más pequeño
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#111827',
     marginBottom: 16,
@@ -304,31 +378,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#f8fafc',
-    padding: 12, // Menos padding
+    padding: 12,
     borderRadius: 12,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    minHeight: 80, // Altura mínima para que no se compacte
   },
   drawerItemCompleted: {
     backgroundColor: '#f0fdf4',
     borderColor: '#16a34a',
+    opacity: 0.7,
   },
   drawerIcon: {
-    width: 44, // Ligeramente más pequeño
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#e5e7eb',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 16,
+    marginRight: 12,
   },
   drawerIconCompleted: {
     backgroundColor: '#dcfce7',
   },
+  drawerTextContainer: {
+    flex: 1,
+  },
   drawerName: {
-    fontSize: 16, // Ligeramente más pequeño
+    fontSize: 16,
     fontWeight: '600',
     color: '#111827',
   },
@@ -341,7 +418,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 24,
+    paddingBottom: 20,
   },
   scanTitle: {
     fontSize: 22,
@@ -353,7 +430,7 @@ const styles = StyleSheet.create({
   scanSubtitle: {
     fontSize: 16,
     color: '#6b7280',
-    marginBottom: 32,
+    marginBottom: 24,
     textAlign: 'center',
     lineHeight: 22,
   },
@@ -361,16 +438,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#3b82f6',
-    paddingVertical: 18, // Ligeramente más pequeño
+    paddingVertical: 16,
     paddingHorizontal: 32,
-    borderRadius: 12, // Ligeramente más pequeño
-    elevation: 4,
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    minWidth: 220, // Ligeramente más pequeño
-    justifyContent: 'center',
+    borderRadius: 12,
+    elevation: 3,
   },
   scanButtonText: {
     color: '#ffffff',
@@ -379,9 +450,8 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   cancelText: {
-    marginTop: 24,
+    marginTop: 20,
     color: '#6b7280',
     fontSize: 16,
   },
 });
-
