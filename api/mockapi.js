@@ -60,6 +60,33 @@ export const getPackingTask = async () => {
 };
 
 /**
+ * (Operador) Obtiene un trabajo de empaque completo con múltiples cajones.
+ * Versión extendida para la pantalla rediseñada.
+ * Ahora devuelve 8 cajones para coincidir con los rieles del modelo 3D.
+ */
+export const getPackingJob = async () => {
+  // Simulación de una llamada de red
+  await delay(500);
+  
+  // Datos simulados
+  return {
+    vuelo: 'LX721',
+    destino: 'ZRH-JFK',
+    tiempoEstandar: 480, // 8 minutos (μ de nuestro modelo)
+    cajones: [
+      { id: 'drawer-1', nombre: 'Cajón 1: Snacks (ECON)', contenido: '32 Snacks, 15 Jugos' },
+      { id: 'drawer-2', nombre: 'Cajón 2: Snacks (ECON)', contenido: '32 Snacks, 15 Jugos' },
+      { id: 'drawer-3', nombre: 'Cajón 3: Bebidas (PREM)', contenido: '8 Vinos, 10 Cervezas' },
+      { id: 'drawer-4', nombre: 'Cajón 4: Bebidas (PREM)', contenido: '8 Vinos, 10 Cervezas' },
+      { id: 'drawer-5', nombre: 'Cajón 5: Amenidades', contenido: '20 Kits Dentales, 15 Antifaces' },
+      { id: 'drawer-6', nombre: 'Cajón 6: Comida Fría', contenido: '12 Ensaladas, 12 Postres' },
+      { id: 'drawer-7', nombre: 'Cajón 7: Vacío', contenido: 'N/A' },
+      { id: 'drawer-8', nombre: 'Cajón 8: Vacío', contenido: 'N/A' },
+    ],
+  };
+};
+
+/**
  * (Operador) Simula la validación de un lote escaneado.
  * Esta es la lógica FEFO que bloquea al usuario.
  */
@@ -120,6 +147,54 @@ export const validateReturnLote = async (loteQR) => {
   }
   
   return { status: 'error', code: 'NOT_FOUND', message: 'Lote no encontrado' };
+};
+
+
+/**
+ * (Operador) Obtiene los detalles de un producto por su EAN/código de barras.
+ */
+export const getProductDetails = async (ean) => {
+  await delay(300);
+  
+  // Simulación de base de datos de productos
+  const productos = {
+    '7501234567890': { ean: '7501234567890', nombre: 'Snack Box Economy' },
+    '7501234567891': { ean: '7501234567891', nombre: 'Jugo de Naranja' },
+    '7501234567892': { ean: '7501234567892', nombre: 'Sándwich de Jamón' },
+    '7501234567893': { ean: '7501234567893', nombre: 'Galletas Chocolate' },
+  };
+  
+  return productos[ean] || null;
+};
+
+/**
+ * (Operador) Registra un nuevo lote en el sistema.
+ */
+export const registerNewLote = async (ean, cantidad, fechaCaducidad) => {
+  await delay(400);
+  
+  // Validaciones básicas
+  if (!ean || !cantidad || !fechaCaducidad) {
+    return {
+      status: 'error',
+      message: 'Faltan datos obligatorios'
+    };
+  }
+  
+  if (cantidad <= 0) {
+    return {
+      status: 'error',
+      message: 'La cantidad debe ser mayor a 0'
+    };
+  }
+  
+  // Simular registro exitoso
+  const loteId = `LOTE-${Date.now()}`;
+  return {
+    status: 'success',
+    message: 'Lote registrado correctamente',
+    loteId: loteId
+  };
 };
 
 
