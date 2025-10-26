@@ -1,0 +1,230 @@
+import { useRef, useEffect, useState } from 'react';
+import { useGLTF, OrbitControls } from '@react-three/drei/native';
+import { useFrame, useLoader } from '@react-three/fiber/native';
+import { Asset } from 'expo-asset';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+import * as THREE from 'three';
+import Drawer from './Drawer';
+
+// Helper function to convert base64 to ArrayBuffer
+function base64ToArrayBuffer(base64) {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+const drawerPositions = [
+  [0, 0.7, 0.2], [0, 0.6, 0.2], [0, 0.5, 0.2], [0, 0.4, 0.2],
+  [0, 0.3, 0.2], [0, 0.2, 0.2], [0, 0.1, 0.2], [0, 0.0, 0.2],
+];
+
+function Model() {
+  const modelRef = useRef();
+  const [gltfScene, setGltfScene] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+  
+  // Load and parse the model
+  useEffect(() => {
+    let isMounted = true;
+    
+    const loadModel = async () => {
+      try {
+        console.log('📦 Starting model load...');
+        const asset = Asset.fromModule(require('../assets/models/trolley.glb'));
+        await asset.downloadAsync();
+        
+        if (!isMounted) return;
+
+        const uri = asset.localUri || asset.uri;
+        console.log('✅ Model downloaded to:', uri);
+
+        // Fetch the file as blob
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        
+        // Use FileReader to convert blob to base64, then to ArrayBuffer
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (isMounted && reader.result) {
+            try {
+              // Extract base64 string from data URL
+              const base64String = reader.result.split(',')[1];
+              console.log('🔄 Converted to base64, length:', base64String.length);
+              
+              // Convert base64 to ArrayBuffer
+              const arrayBuffer = base64ToArrayBuffer(base64String);
+              console.log('✅ Converted to ArrayBuffer, byteLength:', arrayBuffer.byteLength);
+              
+              // Use GLTFLoader.parse to parse the ArrayBuffer directly
+              const loader = new GLTFLoader();
+              
+              // Wrap parse in try-catch to get better error info
+              try {
+                loader.parse(
+                  arrayBuffer,
+                  '/', // path parameter - provide a valid base path (root)
+                  (gltf) => {
+                    if (isMounted) {
+                      console.log('✅ GLTF parsed successfully with', gltf.scene.children.length, 'children');
+                      setGltfScene(gltf.scene);
+                      setLoading(false);
+                    }
+                  },
+                  (parseError) => {
+                    if (isMounted) {
+                      console.error('❌ GLTF parse error:', parseError);
+                      console.error('Error stack:', parseError?.stack);
+                      setError(parseError?.message || String(parseError) || 'Failed to parse GLTF');
+                      setLoading(false);
+                    }
+                  }
+                );
+              } catch (parseErr) {
+                if (isMounted) {
+                  console.error('❌ GLTFLoader.parse threw error:', parseErr);
+                  console.error('Error stack:', parseErr?.stack);
+                  setError(String(parseErr));
+                  setLoading(false);
+                }
+              }
+            } catch (err) {
+              if (isMounted) {
+                console.error('❌ Error converting to ArrayBuffer:', err);
+                setError(err.message);
+                setLoading(false);
+              }
+            }
+          }
+        };
+        
+        reader.onerror = () => {
+          if (isMounted) {
+            console.error('❌ FileReader error');
+            setError('Failed to read file');
+            setLoading(false);
+          }
+        };
+        
+        reader.readAsDataURL(blob);
+      } catch (err) {
+        console.error('❌ Error loading model:', err);
+        if (isMounted) {
+          setError(err.message);
+          setLoading(false);
+        }
+      }
+    };
+    
+    loadModel();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+  
+  if (error) {
+    console.error('❌ Model error:', error);
+    return (
+      <mesh position={[0, 0, 0]}>
+        <boxGeometry args={[0.5, 1, 0.3]} />
+        <meshStandardMaterial color="#ef4444" />
+      </mesh>
+    );
+  }
+  
+  if (loading || !gltfScene) {
+    console.log('⏳ Waiting for model...');
+    return (
+      <mesh position={[0, 0, 0]}>
+        <boxGeometry args={[0.5, 1, 0.3]} />
+        <meshStandardMaterial color="#94a3b8" />
+      </mesh>
+    );
+  }
+  
+  return (
+    <primitive 
+      ref={modelRef} 
+      object={gltfScene} 
+      scale={0.01} 
+      position={[0, 0, 0]}
+      rotation={[0, Math.PI, 0]}
+    />
+  );
+}
+
+// Separate component to use useGLTF hook only when URI is ready
+function ModelContent({ uri, modelRef }) {
+  const gltf = useGLTF(uri);
+  
+  useEffect(() => {
+    if (gltf && gltf.scene) {
+      console.log('✅ GLTF loaded successfully with', gltf.scene.children.length, 'children');
+    }
+  }, [gltf]);
+  
+  if (!gltf || !gltf.scene) {
+    return (
+      <mesh position={[0, 0, 0]}>
+        <boxGeometry args={[0.5, 1, 0.3]} />
+        <meshStandardMaterial color="#94a3b8" />
+      </mesh>
+    );
+  }
+  
+  return (
+    <primitive 
+      ref={modelRef} 
+      object={gltf.scene} 
+      scale={0.01} 
+      position={[0, 0, 0]}
+      rotation={[0, Math.PI, 0]}
+    />
+  );
+}
+
+function Trolley3D({ drawerStates, isFullscreen }) {
+  const groupRef = useRef();
+
+  useFrame((_state, delta) => {
+    if (groupRef.current && !isFullscreen) {
+      groupRef.current.rotation.y += delta * 0.2;
+    }
+  });
+
+  return (
+    <>
+      {/* Improved lighting for better visibility */}
+      <ambientLight intensity={1.5} />
+      <directionalLight position={[10, 10, 10]} intensity={1.2} castShadow />
+      <directionalLight position={[-10, 5, -10]} intensity={0.6} />
+      <pointLight position={[0, 5, 0]} intensity={0.8} />
+      <hemisphereLight args={['#ffffff', '#8888ff', 0.6]} />
+      <spotLight position={[5, 10, 5]} angle={0.3} penumbra={1} intensity={0.8} castShadow />
+
+      {isFullscreen && <OrbitControls enablePan={true} enableZoom={true} />}
+      
+      <group ref={groupRef} dispose={null} position={[0, -0.9, 0]}> 
+        <TrolleyModel />
+        {Object.keys(drawerStates).map((drawerId, index) => {
+          if (index < drawerPositions.length) {
+            return (
+              <Drawer
+                key={drawerId}
+                status={drawerStates[drawerId]}
+                position={drawerPositions[index]}
+              />
+            );
+          }
+          return null;
+        })}
+      </group>
+    </>
+  );
+}
+
+export default Trolley3D;

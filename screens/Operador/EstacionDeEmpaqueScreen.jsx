@@ -5,9 +5,9 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Modal as RNModal,
-  SafeAreaView
+  Modal as RNModal
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 
 // --- ¡IMPORTS 3D! ---
@@ -19,6 +19,14 @@ import { getPackingJob } from '../../api/mockapi';
 import { Package, Clock, ScanLine, Check, Maximize2, X, ChevronUp, ChevronDown } from 'lucide-react-native';
 import FeedbackModal from '../../components/FeedbackModal';
 
+// Loading fallback component
+const LoadingFallback = () => (
+  <View style={styles.centered}>
+    <ActivityIndicator size="large" color="#3b82f6" />
+    <Text style={styles.loadingText}>Cargando modelo 3D...</Text>
+  </View>
+);
+
 export default function EstacionDeEmpaqueScreen({ navigation }) {
   // ... (Todos tus 'useState' y 'useRef' de BottomSheet están perfectos) ...
   const [job, setJob] = useState(null);
@@ -27,6 +35,7 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
   const [timer, setTimer] = useState(0);
   const [modal, setModal] = useState({ isVisible: false, type: '', message: '' });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [modelError, setModelError] = useState(false);
   const bottomSheetRef = useRef(null);
   const snapPoints = useMemo(() => ['25%', '90%'], []);
   const [isSheetExpanded, setIsSheetExpanded] = useState(false);
@@ -81,6 +90,15 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
     setIsSheetExpanded(index === 1);
   }, []);
 
+  const onCanvasCreated = useCallback(() => {
+    console.log('🎨 Canvas created successfully');
+  }, []);
+
+  const onCanvasError = useCallback((error) => {
+    console.error('❌ Canvas error:', error);
+    setModelError(true);
+  }, []);
+
   if (!job) {
     return (
       <View style={styles.centered}>
@@ -92,7 +110,7 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
 
   // --- UI Principal ---
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <FeedbackModal
         isVisible={modal.isVisible}
         type={modal.type}
@@ -107,10 +125,14 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
         animationType="slide"
         onRequestClose={() => setIsFullscreen(false)}
       >
-        <SafeAreaView style={styles.fullscreenContainer}>
+        <SafeAreaView style={styles.fullscreenContainer} edges={['top', 'left', 'right']}>
           {/* Canvas 3D en Pantalla Completa */}
-          <Suspense fallback={<ActivityIndicator size="large" color="#3b82f6" />}>
-            <Canvas>
+          <Suspense fallback={<LoadingFallback />}>
+            <Canvas 
+              camera={{ position: [0, 1.5, 4], fov: 50 }}
+              onCreated={onCanvasCreated}
+              onError={onCanvasError}
+            >
               <Trolley3D drawerStates={drawerStates} isFullscreen={true} />
             </Canvas>
           </Suspense>
@@ -133,6 +155,8 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
         <TouchableOpacity
           style={styles.fullscreenButton}
           onPress={() => setIsFullscreen(true)}
+          accessible={true}
+          accessibilityLabel="Ver en pantalla completa"
         >
           <Maximize2 color="#111827" size={20} />
         </TouchableOpacity>
@@ -141,16 +165,29 @@ export default function EstacionDeEmpaqueScreen({ navigation }) {
       {/* 2. Visualizador del Carrito (¡AHORA ES 3D!) */}
       <View style={styles.canvasContainer}>
         {/* ¡AQUÍ ESTÁ EL CAMBIO! Se fue el Trolley2D y entró el Canvas 3D */}
-        <Suspense fallback={
+        {modelError ? (
           <View style={styles.centered}>
-            <ActivityIndicator size="large" color="#3b82f6" />
-            <Text style={styles.loadingText}>Cargando modelo 3D...</Text>
+            <Text style={styles.errorText}>Error al cargar el modelo 3D</Text>
+            <TouchableOpacity 
+              style={styles.retryButton}
+              onPress={() => {
+                setModelError(false);
+              }}
+            >
+              <Text style={styles.retryButtonText}>Reintentar</Text>
+            </TouchableOpacity>
           </View>
-        }>
-          <Canvas>
-            <Trolley3D drawerStates={drawerStates} isFullscreen={false} />
-          </Canvas>
-        </Suspense>
+        ) : (
+          <Suspense fallback={<LoadingFallback />}>
+            <Canvas 
+              camera={{ position: [0, 1.5, 4], fov: 50 }}
+              onCreated={onCanvasCreated}
+              onError={onCanvasError}
+            >
+              <Trolley3D drawerStates={drawerStates} isFullscreen={false} />
+            </Canvas>
+          </Suspense>
+        )}
         
         {/* Tarjeta de Tiempos (Superpuesta) */}
         <View style={styles.timerCard}>
@@ -252,16 +289,34 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 18,
     color: '#6b7280',
+    fontWeight: '500',
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#ef4444',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 10,
     paddingBottom: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(229, 231, 235, 0.7)',
     position: 'absolute',
-    top: 40, // Asume SafeAreaView
+    top: 0,
     left: 0,
     right: 0,
     zIndex: 10,
@@ -281,7 +336,7 @@ const styles = StyleSheet.create({
   canvasContainer: {
     flex: 1, // Ocupa todo el espacio disponible
     position: 'relative',
-    marginTop: 100, // Espacio para el header
+    marginTop: 70, // Espacio para el header
     marginBottom: 50, // Espacio para el timer
   },
   timerCard: {

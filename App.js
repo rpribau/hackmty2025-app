@@ -1,5 +1,8 @@
+// Initialize polyfills before any other imports
+import './utils/polyfills';
+import setupPolyfills from './utils/polyfills';
+setupPolyfills();
 
-import 'base-64'
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';

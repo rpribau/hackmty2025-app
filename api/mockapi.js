@@ -62,7 +62,7 @@ export const getPackingTask = async () => {
 /**
  * (Operador) Obtiene un trabajo de empaque completo con múltiples cajones.
  * Versión extendida para la pantalla rediseñada.
- * Ahora devuelve 8 cajones para coincidir con los rieles del modelo 3D.
+ * Ahora devuelve 16 cajones para coincidir con el modelo 3D de doble lado (8 front + 8 back).
  */
 export const getPackingJob = async () => {
   // Simulación de una llamada de red
@@ -74,6 +74,7 @@ export const getPackingJob = async () => {
     destino: 'ZRH-JFK',
     tiempoEstandar: 480, // 8 minutos (μ de nuestro modelo)
     cajones: [
+      // FRONT SIDE (8 drawers)
       { id: 'drawer-1', nombre: 'Cajón 1: Snacks (ECON)', contenido: '32 Snacks, 15 Jugos' },
       { id: 'drawer-2', nombre: 'Cajón 2: Snacks (ECON)', contenido: '32 Snacks, 15 Jugos' },
       { id: 'drawer-3', nombre: 'Cajón 3: Bebidas (PREM)', contenido: '8 Vinos, 10 Cervezas' },
@@ -82,6 +83,15 @@ export const getPackingJob = async () => {
       { id: 'drawer-6', nombre: 'Cajón 6: Comida Fría', contenido: '12 Ensaladas, 12 Postres' },
       { id: 'drawer-7', nombre: 'Cajón 7: Vacío', contenido: 'N/A' },
       { id: 'drawer-8', nombre: 'Cajón 8: Vacío', contenido: 'N/A' },
+      // BACK SIDE (8 drawers)
+      { id: 'drawer-9', nombre: 'Cajón 9: Snacks (BUS)', contenido: '24 Snacks, 12 Bebidas' },
+      { id: 'drawer-10', nombre: 'Cajón 10: Comida Caliente', contenido: '16 Platos Calientes' },
+      { id: 'drawer-11', nombre: 'Cajón 11: Bebidas (BUS)', contenido: '15 Vinos, 12 Licores' },
+      { id: 'drawer-12', nombre: 'Cajón 12: Postres', contenido: '20 Pasteles, 18 Frutas' },
+      { id: 'drawer-13', nombre: 'Cajón 13: Cubiertos', contenido: '50 Sets Cubiertos' },
+      { id: 'drawer-14', nombre: 'Cajón 14: Servilletas', contenido: '100 Servilletas' },
+      { id: 'drawer-15', nombre: 'Cajón 15: Vacío', contenido: 'N/A' },
+      { id: 'drawer-16', nombre: 'Cajón 16: Vacío', contenido: 'N/A' },
     ],
   };
 };
