@@ -8,11 +8,12 @@ import {
   Platform, 
   Modal,
   ScrollView,
-  ActivityIndicator
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { QrCode, Calendar, Package, CheckCircle, X, Save, Hash } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { saveLoteToDatabase } from '../../api/mockapi';
+import { itemsService, restockHistoryService } from '../../api';
 
 /**
  * Pantalla para el Paso 1: Registrar Lote (REDISEÑADA)
@@ -38,6 +39,9 @@ export default function RegistroDeLoteScreen({ navigation, route }) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [successModal, setSuccessModal] = useState(false);
+
+  // Get employee ID from route params
+  const employeeId = route.params?.employeeId;
 
   // 1. Hook para recibir el QR code escaneado
   useEffect(() => {
@@ -65,48 +69,58 @@ export default function RegistroDeLoteScreen({ navigation, route }) {
   const handleSaveLote = async () => {
     // Validación
     if (!objectName.trim()) {
-      alert('Por favor ingresa el nombre del producto');
+      Alert.alert('Error', 'Por favor ingresa el nombre del producto');
       return;
     }
     if (!loteID.trim()) {
-      alert('Por favor ingresa el ID del lote');
+      Alert.alert('Error', 'Por favor ingresa el ID del lote');
       return;
     }
     if (!cantidad.trim() || isNaN(cantidad)) {
-      alert('Por favor ingresa una cantidad válida');
+      Alert.alert('Error', 'Por favor ingresa una cantidad válida');
       return;
     }
 
     setSaving(true);
     
     try {
-      // Guardar en la base de datos
-      const loteData = {
-        QR_code: qrCode,
-        Object_name: objectName.trim(),
-        LoteID: loteID.trim(),
-        Fecha_de_caducidad: fechaCaducidad.toISOString(),
-        Cantidad: parseInt(cantidad),
+      // Create item in database
+      const itemData = {
+        item_type: objectName.trim(),
+        batch_number: loteID.trim(),
+        quantity: parseInt(cantidad),
+        expiry_date: fechaCaducidad.toISOString(),
+        qr_code: qrCode,
+        status: 'available',
       };
 
-      const result = await saveLoteToDatabase(loteData);
+      const createdItem = await itemsService.createItem(itemData);
       
-      if (result.status === 'success') {
-        setSaving(false);
-        setSuccessModal(true);
-        // Auto-cerrar después de 2 segundos
-        setTimeout(() => {
-          resetFlow();
-          navigation.goBack();
-        }, 2000);
-      } else {
-        setSaving(false);
-        alert('Error al guardar: ' + result.message);
+      // Log registration activity
+      if (employeeId) {
+        await restockHistoryService.logBatchRegistration(
+          employeeId,
+          createdItem.id,
+          parseInt(cantidad)
+        );
       }
+      
+      setSaving(false);
+      setSuccessModal(true);
+      
+      // Auto-cerrar después de 2 segundos
+      setTimeout(() => {
+        resetFlow();
+        navigation.goBack();
+      }, 2000);
+      
     } catch (error) {
       setSaving(false);
-      alert('Error al guardar el lote');
-      console.error(error);
+      console.error('Error saving item:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'No se pudo guardar el lote. Verifica la conexión con el servidor.'
+      );
     }
   };
 

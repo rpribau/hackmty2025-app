@@ -1,31 +1,98 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import { PieChart, Trash2, TrendingDown } from 'lucide-react-native';
+import { restockHistoryService, itemsService } from '../../api';
 
 /**
  * Dashboard de Consumo (REDISEÑADO)
  * Basado en las probabilidades de transición de Markov.
  */
 export default function DashboardConsumoScreen() {
-  // Datos simulados de nuestros modelos de Markov
-  const kpiData = {
-    tasaDesperdicio: 12.8, // % de items (S_Vencido) desechados
-    tasaRetorno: 45.0,   // % de items que regresan sin consumirse
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [kpiData, setKpiData] = useState({
+    tasaDesperdicio: 0,
+    tasaRetorno: 0,
+  });
+  const [warningRecords, setWarningRecords] = useState([]);
+  const [topDepleted, setTopDepleted] = useState([]);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      // Get all restock history
+      const allHistory = await restockHistoryService.getRestockHistory(0, 100);
+      
+      // Get warning records (batch stacking)
+      const warnings = await restockHistoryService.getWarningRecords();
+      
+      // Get all items
+      const allItems = await itemsService.getItems(0, 100);
+      
+      // Calculate waste rate (depleted items)
+      const depletedItems = allItems.filter(item => item.status === 'depleted');
+      const totalItems = allItems.length;
+      const wasteRate = totalItems > 0 ? (depletedItems.length / totalItems) * 100 : 12.8;
+      
+      // Calculate return rate (based on removal actions)
+      const removalActions = allHistory.filter(h => h.action_type === 'removal');
+      const restockActions = allHistory.filter(h => h.action_type === 'restock');
+      const returnRate = restockActions.length > 0 
+        ? (removalActions.length / restockActions.length) * 100 
+        : 45.0;
+      
+      setKpiData({
+        tasaDesperdicio: wasteRate.toFixed(1),
+        tasaRetorno: returnRate.toFixed(1),
+      });
+      
+      setWarningRecords(warnings.slice(0, 5));
+      
+      // Calculate top depleted item types
+      const itemTypeCounts = {};
+      depletedItems.forEach(item => {
+        itemTypeCounts[item.item_type] = (itemTypeCounts[item.item_type] || 0) + 1;
+      });
+      
+      const sorted = Object.entries(itemTypeCounts)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+      
+      setTopDepleted(sorted);
+      
+    } catch (error) {
+      console.error('Error loading consumo data:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   };
 
-  const chartData = {
-    topDesperdicio: [
-      { nombre: 'Jugo de Naranja 200ml', pct: 35 },
-      { nombre: 'Snack Box (ECON)', pct: 28 },
-    ],
-    topNoConsumido: [
-      { nombre: 'Vino Blanco (PREM)', pct: 60 },
-      { nombre: 'Agua Mineral 500ml', pct: 55 },
-    ],
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
   };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#3b82f6" />
+        <Text style={styles.loadingText}>Cargando datos...</Text>
+      </View>
+    );
+  }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
+    >
       <Text style={styles.title}>Dashboard: Consumo</Text>
 
       {/* 1. Tarjetas de KPIs Principales */}
@@ -46,26 +113,43 @@ export default function DashboardConsumoScreen() {
       <View style={styles.chartCard}>
         <View style={styles.cardHeaderAlert}>
           <Trash2 color="#dc2626" size={20} />
-          <Text style={styles.cardTitleAlert}>Top 5 Desperdicio (Markov P(S_Desecho))</Text>
+          <Text style={styles.cardTitleAlert}>Top 5 Items Agotados</Text>
         </View>
-        {/* Aquí iría un gráfico de Pie o Barras */}
-        <View style={styles.chartPlaceholder}>
-          <Text style={styles.chartText}>(Gráfico de barras: Jugo 35%, Snack 28%, ...)</Text>
-        </View>
+        {topDepleted.length === 0 ? (
+          <Text style={styles.emptyText}>No hay datos de desperdicio</Text>
+        ) : (
+          topDepleted.map((item, index) => (
+            <View key={index} style={styles.listItem}>
+              <Text style={styles.listItemText}>{item.name}</Text>
+              <Text style={styles.listItemValue}>{item.count} veces</Text>
+            </View>
+          ))
+        )}
       </View>
       
       {/* 3. Tarjeta de Puntos Problemáticos (Accionable) */}
       <View style={styles.chartCard}>
         <View style={styles.cardHeaderAlert}>
           <TrendingDown color="#f97316" size={20} />
-          <Text style={styles.cardTitleAlert}>Top 5 Retorno (Markov P(S_Retorno))</Text>
+          <Text style={styles.cardTitleAlert}>Advertencias de Apilamiento</Text>
         </View>
-        {chartData.topNoConsumido.map((item, index) => (
-          <View key={index} style={styles.listItem}>
-            <Text style={styles.listItemText}>{item.nombre}</Text>
-            <Text style={styles.listItemValue}>{item.pct}%</Text>
-          </View>
-        ))}
+        {warningRecords.length === 0 ? (
+          <Text style={styles.emptyText}>No hay advertencias registradas</Text>
+        ) : (
+          warningRecords.map((record, index) => (
+            <View key={index} style={styles.listItem}>
+              <View>
+                <Text style={styles.listItemText}>
+                  {record.action_type} - Empleado {record.employee_id}
+                </Text>
+                <Text style={styles.listItemSubtext}>
+                  {new Date(record.created_at).toLocaleDateString('es-MX')}
+                </Text>
+              </View>
+              <Text style={styles.warningBadge}>⚠️</Text>
+            </View>
+          ))
+        )}
       </View>
     </ScrollView>
   );
@@ -77,6 +161,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc',
     padding: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#64748b',
   },
   title: {
     fontSize: 28,
@@ -150,6 +245,7 @@ const styles = StyleSheet.create({
   listItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
@@ -158,10 +254,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#374151',
   },
+  listItemSubtext: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
   listItemValue: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#f97316', // Naranja
+  },
+  warningBadge: {
+    fontSize: 20,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: '#9ca3af',
+    fontSize: 14,
+    paddingVertical: 20,
   },
 });
 

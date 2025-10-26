@@ -23,11 +23,20 @@ export default function ScannerComponent() {
   // 2. Manejador del escaneo
   const handleBarCodeScanned = ({ type, data }) => {
     setScanned(true);
-    // Devuelve el dato a la pantalla anterior y cierra el modal
-    navigation.navigate({
-      name: navigation.getState().routes[navigation.getState().index - 1].name, // Vuelve a la pantalla anterior
-      params: { scannedData: data }, // Pasa el dato escaneado
-      merge: true,
+    
+    // Use setParams on the previous screen to update its params
+    // Then go back to preserve all existing params
+    const state = navigation.getState();
+    const previousRoute = state.routes[state.index - 1];
+    
+    console.log('📸 QR Scanned:', data);
+    console.log('🔙 Previous route:', previousRoute.name);
+    console.log('📦 Previous params:', previousRoute.params);
+    
+    // Navigate back to previous screen with updated params
+    navigation.navigate(previousRoute.name, {
+      ...previousRoute.params,
+      scannedData: data
     });
   };
 

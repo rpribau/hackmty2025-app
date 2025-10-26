@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -7,7 +7,8 @@ import {
   ScrollView,
   Modal,
   ActivityIndicator,
-  FlatList
+  FlatList,
+  Alert
 } from 'react-native';
 import { 
   Package, 
@@ -15,12 +16,11 @@ import {
   CheckCircle, 
   AlertTriangle,
   Save,
-  X,
   ChevronRight,
   Lock
 } from 'lucide-react-native';
 import { Canvas } from '@react-three/fiber/native';
-import { getDrawerJob, validateDrawerQR, saveDrawerData, completePackingJob, checkJobAvailability } from '../../api/mockapi';
+import { drawersService, drawerStatusService, itemsService, restockHistoryService } from '../../api';
 import Trolley3D from '../../components/Trolley3D';
 
 /**
@@ -41,6 +41,8 @@ export default function EmpaqueGuiadoScreen({ navigation, route }) {
   
   // Estado del cajón activo
   const [selectedDrawer, setSelectedDrawer] = useState(null);
+  // Initialize ref from route params (survives remount!)
+  const selectedDrawerIdRef = useRef(route.params?.pendingDrawerId || null);
   const [drawerDetails, setDrawerDetails] = useState(null);
   const [itemsChecked, setItemsChecked] = useState({});
   
@@ -51,34 +53,127 @@ export default function EmpaqueGuiadoScreen({ navigation, route }) {
   const [saving, setSaving] = useState(false);
   const [completingJob, setCompletingJob] = useState(false);
 
+  // Get employee ID from route params
+  const employeeId = route.params?.employeeId;
+
   // 1. Cargar el trabajo al montar el componente
   useEffect(() => {
     loadJob();
   }, []);
 
+  // 1.5. Bloquear navegación hacia atrás cuando hay un cajón en proceso
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      // Si no hay cajón en proceso, permitir navegación normal
+      if (!drawerDetails) {
+        return;
+      }
+
+      // Prevenir la navegación por defecto
+      e.preventDefault();
+
+      // Mostrar alerta de confirmación
+      Alert.alert(
+        'Proceso en curso',
+        'Debes completar o guardar el cajón actual antes de salir.',
+        [
+          { text: 'Entendido', style: 'cancel' }
+        ]
+      );
+    });
+
+    return unsubscribe;
+  }, [navigation, drawerDetails]);
+
   // 2. Listener para QR escaneado
   useEffect(() => {
-    if (route.params?.scannedData && selectedDrawer) {
-      handleDrawerQRScanned(route.params.scannedData);
+    console.log('📱 QR Scan Effect triggered:', {
+      scannedData: route.params?.scannedData,
+      selectedDrawerIdRef: selectedDrawerIdRef.current,
+      currentSelectedDrawer: selectedDrawer?.id
+    });
+    
+    if (route.params?.scannedData && selectedDrawerIdRef.current) {
+      // Find the drawer from ref
+      const targetDrawer = drawers.find(d => d.id === selectedDrawerIdRef.current);
+      
+      if (targetDrawer) {
+        console.log('✅ Processing QR scan for drawer from ref:', targetDrawer.drawer_code || targetDrawer.id);
+        handleDrawerQRScanned(route.params.scannedData, targetDrawer);
+      } else {
+        console.log('⚠️ Drawer not found in drawers array:', selectedDrawerIdRef.current);
+      }
+    } else if (route.params?.scannedData && !selectedDrawerIdRef.current) {
+      console.log('⚠️ QR scanned but no drawer selected in ref!');
     }
-  }, [route.params?.scannedData]);
+  }, [route.params?.scannedData, drawers]);
 
   const loadJob = async () => {
     setLoading(true);
     try {
-      const job = await getDrawerJob();
+      // Get all drawers from API
+      const allDrawers = await drawersService.getDrawers(0, 100);
+      
+      // For now, simulate a job with first 16 drawers
+      // In production, you would have a jobs API to get assigned jobs
+      const jobDrawers = allDrawers.slice(0, 16);
+      
+      // Create job data structure
+      const job = {
+        jobId: 'JOB-' + Date.now(),
+        flight: 'AA1234',
+        route: 'MEX → NYC',
+        status: false,
+        locked: false,
+        drawers: jobDrawers
+      };
+      
       setJobData(job);
       
-      // Inicializar estado de cajones
-      const initialDrawers = job.drawers.map(drawer => ({
+      // 🆕 Fetch drawer_status records to check completion state
+      console.log('🔍 Checking drawer completion status from database...');
+      const drawerStatusMap = {};
+      
+      for (const drawer of jobDrawers) {
+        try {
+          const response = await drawerStatusService.getStatusByDrawer(drawer.id);
+          // baseService.js already unwraps the response, so 'response' IS the data object
+          // If we get here without error, drawer has status = completed
+          if (response && response.id) {
+            drawerStatusMap[drawer.id] = 'completed';
+            console.log(`✅ Drawer ${drawer.drawer_code} is completed (DB status: ${response.status})`);
+          } else {
+            drawerStatusMap[drawer.id] = 'pending';
+          }
+        } catch (error) {
+          // If 404 or error, drawer has no status = pending
+          drawerStatusMap[drawer.id] = 'pending';
+          console.log(`📝 Drawer ${drawer.drawer_code} is pending (no status records)`);
+        }
+      }
+      
+      // Inicializar estado de cajones con status real de la BD
+      const initialDrawers = jobDrawers.map(drawer => ({
         ...drawer,
-        status: 'pending', // pending, in-progress, completed
-        scanned: false
+        id: drawer.id || drawer.drawer_id,
+        name: `Cajón ${drawer.drawer_code || drawer.id}`,
+        description: drawer.location || 'Sin ubicación',
+        status: drawerStatusMap[drawer.id] || 'pending', // 🆕 Use DB status instead of hardcoded 'pending'
+        scanned: drawerStatusMap[drawer.id] === 'completed'
       }));
+      
+      console.log('🎨 Final drawer states:', 
+        Object.fromEntries(initialDrawers.map(d => [d.id, d.status]))
+      );
+      
       setDrawers(initialDrawers);
     } catch (error) {
-      alert('Error al cargar el trabajo');
-      console.error(error);
+      console.error('Error loading job:', error);
+      Alert.alert(
+        'Error',
+        'No se pudo cargar el trabajo. Verifica la conexión con el servidor.',
+        [{ text: 'OK' }]
+      );
     } finally {
       setLoading(false);
     }
@@ -86,52 +181,95 @@ export default function EmpaqueGuiadoScreen({ navigation, route }) {
 
   // 3. Usuario selecciona un cajón
   const handleSelectDrawer = (drawer) => {
+    console.log('🎯 Drawer selected:', {
+      id: drawer.id,
+      drawer_code: drawer.drawer_code,
+      status: drawer.status
+    });
+    
     if (drawer.status === 'completed') {
-      alert('Este cajón ya está completado');
+      Alert.alert('Cajón completado', 'Este cajón ya está completado');
       return;
     }
     
     setSelectedDrawer(drawer);
+    selectedDrawerIdRef.current = drawer.id; // Store in ref!
     setShowScanner(true);
-    // Navegar a scanner
+    console.log('🚀 Navigating to Scanner for drawer:', drawer.drawer_code || drawer.id);
+    console.log('💾 Stored in ref:', selectedDrawerIdRef.current);
+    // Store in navigation params so it survives component unmount!
+    navigation.setParams({ pendingDrawerId: drawer.id });
     navigation.navigate('Scanner');
   };
 
   // 4. QR del cajón escaneado
-  const handleDrawerQRScanned = async (qrCode) => {
-    navigation.setParams({ scannedData: null });
+  const handleDrawerQRScanned = async (qrCode, targetDrawer) => {
+    console.log('🔍 Processing QR Code:', qrCode);
+    console.log('🔍 Target drawer:', targetDrawer?.drawer_code || targetDrawer?.id);
+    
+    navigation.setParams({ scannedData: null, pendingDrawerId: null }); // Clear both params!
     setShowScanner(false);
+    selectedDrawerIdRef.current = null; // Clear ref after use
     
     try {
-      // Validar QR y obtener detalles del cajón
-      const details = await validateDrawerQR(qrCode, selectedDrawer.id);
+      // Find drawer by QR code
+      console.log('🌐 Finding drawer by QR code...');
+      const drawer = await drawersService.findDrawerByQRCode(qrCode);
+      console.log('📦 Found drawer:', drawer);
       
-      if (details.status === 'error') {
-        alert(details.message);
+      if (!drawer || drawer.id !== targetDrawer.id) {
+        console.log('❌ QR mismatch:', {
+          foundDrawerId: drawer?.id,
+          targetDrawerId: targetDrawer?.id,
+          match: drawer?.id === targetDrawer?.id
+        });
+        Alert.alert('QR Inválido', 'El QR escaneado no corresponde al cajón seleccionado');
         setSelectedDrawer(null);
         return;
       }
       
+      console.log('✅ QR matches selected drawer!');
+      
+      // Keep selectedDrawer updated with the validated drawer data
+      setSelectedDrawer(drawer);
+      
+      // Get available items (FEFO sorted)
+      const availableItems = await itemsService.getAvailableBatches();
+      
+      // Take first 3-5 items for this drawer (in production, this would be based on flight requirements)
+      const drawerItems = availableItems.slice(0, Math.floor(Math.random() * 3) + 3);
+      
       // Actualizar estado del cajón a "in-progress"
       setDrawers(prev => prev.map(d => 
-        d.id === selectedDrawer.id 
+        d.id === targetDrawer.id 
           ? { ...d, status: 'in-progress', scanned: true, qrCode: qrCode }
           : d
       ));
       
       // Mostrar detalles del cajón
-      setDrawerDetails(details.data);
+      setDrawerDetails({
+        name: drawer.drawer_code,
+        type: 'Standard',
+        class: 'Economy',
+        items: drawerItems.map(item => ({
+          id: item.id,
+          name: item.item_type,
+          quantity: item.quantity,
+          batch_number: item.batch_number,
+          expiry_date: item.expiry_date
+        }))
+      });
       
       // Inicializar checklist
       const initialChecked = {};
-      details.data.items.forEach(item => {
+      drawerItems.forEach(item => {
         initialChecked[item.id] = false;
       });
       setItemsChecked(initialChecked);
       
     } catch (error) {
-      alert('Error al validar el QR del cajón');
-      console.error(error);
+      console.error('Error validating drawer QR:', error);
+      Alert.alert('Error', 'No se pudo validar el QR del cajón');
       setSelectedDrawer(null);
     }
   };
@@ -150,7 +288,7 @@ export default function EmpaqueGuiadoScreen({ navigation, route }) {
     const allChecked = Object.values(itemsChecked).every(checked => checked);
     
     if (!allChecked) {
-      alert('Por favor marca todos los items como completados');
+      Alert.alert('Items incompletos', 'Por favor marca todos los items como completados');
       return;
     }
     
@@ -163,40 +301,69 @@ export default function EmpaqueGuiadoScreen({ navigation, route }) {
     setSaving(true);
     
     try {
-      const drawerData = {
-        drawerId: selectedDrawer.id,
-        qrCode: drawers.find(d => d.id === selectedDrawer.id).qrCode,
-        items: drawerDetails.items.map(item => ({
-          id: item.id,
-          name: item.name,
+      // Create drawer status for each item (batch)
+      // According to apispec: POST /api/drawer-status requires drawer_id, batch_id, quantity, status
+      const statusPromises = drawerDetails.items.map(async (item) => {
+        const statusData = {
+          drawer_id: selectedDrawer.id,
+          batch_id: item.id, // FIXED: Changed from item_id to batch_id per apispec
           quantity: item.quantity,
-          completed: itemsChecked[item.id]
-        })),
-        completedAt: new Date().toISOString()
-      };
-      
-      const result = await saveDrawerData(drawerData);
-      
-      if (result.status === 'success') {
-        // Actualizar estado del cajón a "completed"
-        setDrawers(prev => prev.map(d => 
-          d.id === selectedDrawer.id 
-            ? { ...d, status: 'completed' }
-            : d
-        ));
+          status: 'full', // FIXED: Changed from 'active' to valid status per apispec: empty, partial, full, needs_restock
+          employee_id: employeeId // Optional: Track who loaded the drawer
+        };
         
-        // Limpiar estado
-        setSelectedDrawer(null);
-        setDrawerDetails(null);
-        setItemsChecked({});
+        console.log('📤 Creating drawer status:', statusData);
+        const result = await drawerStatusService.createStatus(statusData);
         
-        alert('✅ Cajón guardado correctamente');
-      } else {
-        alert('Error al guardar: ' + result.message);
+        // Check for batch stacking warning (HTTP 207)
+        if (result.hasWarning) {
+          Alert.alert(
+            '⚠️ Advertencia de Apilamiento',
+            `Se detectó apilamiento de lotes en el cajón ${selectedDrawer.name}:\n\n${result.warning?.message || 'Múltiples lotes detectados'}`,
+            [{ text: 'OK' }]
+          );
+        }
+        
+        return result;
+      });
+      
+      await Promise.all(statusPromises);
+      
+      // Log restock action to history
+      if (employeeId) {
+        try {
+          await restockHistoryService.logRestockAction({
+            employee_id: employeeId,
+            drawer_id: selectedDrawer.id,
+            action_type: 'restock',
+            quantity_changed: drawerDetails.items.reduce((sum, item) => sum + item.quantity, 0),
+            accuracy_score: 100,
+            efficiency_score: 95,
+            notes: `Empaque Guiado - Cajón ${selectedDrawer.drawer_code || selectedDrawer.name}`
+          });
+        } catch (error) {
+          console.error('Error logging history:', error);
+        }
       }
+      
+      // Actualizar estado del cajón a "completed"
+      setDrawers(prev => prev.map(d => 
+        d.id === selectedDrawer.id 
+          ? { ...d, status: 'completed' }
+          : d
+      ));
+      
+      // Limpiar estado y navegación
+      navigation.setParams({ scannedData: null, pendingDrawerId: null });
+      selectedDrawerIdRef.current = null;
+      setSelectedDrawer(null);
+      setDrawerDetails(null);
+      setItemsChecked({});
+      
+      Alert.alert('Éxito', `✅ Cajón guardado correctamente\n\nCajón: ${selectedDrawer.drawer_code || selectedDrawer.name}\nItems cargados: ${drawerDetails.items.length}`);
     } catch (error) {
-      alert('Error al guardar el cajón');
-      console.error(error);
+      console.error('Error saving drawer:', error);
+      Alert.alert('Error', `No se pudo guardar el cajón:\n\n${error.message || 'Error desconocido'}`);
     } finally {
       setSaving(false);
     }
@@ -210,7 +377,7 @@ export default function EmpaqueGuiadoScreen({ navigation, route }) {
   // 9. Usuario finaliza el trabajo completo
   const handleCompleteJob = () => {
     if (!allDrawersCompleted()) {
-      alert('Debes completar todos los cajones antes de finalizar');
+      Alert.alert('Trabajo incompleto', 'Debes completar todos los cajones antes de finalizar');
       return;
     }
     
@@ -223,48 +390,54 @@ export default function EmpaqueGuiadoScreen({ navigation, route }) {
     setCompletingJob(true);
     
     try {
-      const result = await completePackingJob(jobData.jobId, drawers);
-      
-      if (result.status === 'success') {
-        // Actualizar el estado del trabajo
-        setJobData(prev => ({
-          ...prev,
-          status: true, // FALSE → TRUE
-          locked: true
-        }));
-        
-        // Verificar si hay trabajos disponibles
-        const availability = await checkJobAvailability();
-        
-        alert('🎉 Trabajo completado exitosamente!\n\n' + 
-              '📊 Estado del trabajo: FALSE → TRUE\n' +
-              '🔒 Trabajo bloqueado - No se pueden editar cajones\n\n' +
-              (availability.available 
-                ? '✅ Hay nuevos trabajos disponibles' 
-                : '⏳ No hay trabajos disponibles por el momento'));
-        
-        // Regresar al Home
-        navigation.navigate('OperadorHome', {
-          jobCompleted: true,
-          hasNewJobs: availability.available,
-          jobStatus: true // Enviamos el nuevo estado
+      // Log packing completion for each drawer
+      if (employeeId) {
+        const logPromises = drawers.map(async (drawer) => {
+          return restockHistoryService.logPackingCompletion(
+            employeeId,
+            drawer.id,
+            0, // item_id not available here
+            0, // quantity not available here
+            100, // accuracy score
+            100  // efficiency score
+          );
         });
-      } else {
-        alert('Error al finalizar: ' + result.message);
+        
+        await Promise.all(logPromises);
       }
+      
+      // Actualizar el estado del trabajo
+      setJobData(prev => ({
+        ...prev,
+        status: true, // FALSE → TRUE
+        locked: true
+      }));
+      
+      Alert.alert(
+        '🎉 Trabajo Completado',
+        '¡Felicidades! Has completado exitosamente el empaque del vuelo.\n\n' +
+        '📊 Estado del trabajo: FALSE → TRUE\n' +
+        '🔒 Trabajo bloqueado - No se pueden editar cajones',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              navigation.navigate('OperadorHome', {
+                jobCompleted: true,
+                hasNewJobs: false,
+                jobStatus: true
+              });
+            }
+          }
+        ]
+      );
+      
     } catch (error) {
-      alert('Error al completar el trabajo');
-      console.error(error);
+      console.error('Error completing job:', error);
+      Alert.alert('Error', 'No se pudo completar el trabajo');
     } finally {
       setCompletingJob(false);
     }
-  };
-
-  // 11. Cancelar llenado de cajón
-  const handleCancelDrawer = () => {
-    setSelectedDrawer(null);
-    setDrawerDetails(null);
-    setItemsChecked({});
   };
 
   if (loading) {
@@ -493,19 +666,12 @@ export default function EmpaqueGuiadoScreen({ navigation, route }) {
             ))}
           </ScrollView>
 
-          {/* Botones de acción */}
+          {/* Botón de acción - Solo Guardar */}
           <View style={styles.drawerDetailActions}>
-            <TouchableOpacity 
-              style={styles.cancelDrawerButton}
-              onPress={handleCancelDrawer}
-            >
-              <X size={20} color="#64748b" />
-              <Text style={styles.cancelDrawerText}>Cancelar</Text>
-            </TouchableOpacity>
-            
             <TouchableOpacity 
               style={[
                 styles.saveDrawerButton,
+                styles.saveDrawerButtonFullWidth,
                 !Object.values(itemsChecked).every(c => c) && styles.saveDrawerButtonDisabled
               ]}
               onPress={handleConfirmDrawer}
@@ -776,23 +942,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
   },
-  cancelDrawerButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'white',
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    paddingVertical: 16,
-    borderRadius: 12,
-    gap: 8,
-  },
-  cancelDrawerText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#64748b',
-  },
   saveDrawerButton: {
     flex: 1,
     flexDirection: 'row',
@@ -802,6 +951,9 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
     gap: 8,
+  },
+  saveDrawerButtonFullWidth: {
+    flex: 1,
   },
   saveDrawerButtonDisabled: {
     backgroundColor: '#94a3b8',

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Package, PlusCircle, ArrowLeftRight, ChevronRight, Clock, TrendingUp, TrendingDown } from 'lucide-react-native';
-import { getOperadorHistory } from '../../api/mockapi';
+import { employeesService, restockHistoryService } from '../../api';
 
 /**
  * Pantalla principal del Operador (REDISEÑADA)
@@ -17,19 +17,76 @@ import { getOperadorHistory } from '../../api/mockapi';
 export default function OperadorHomeScreen({ navigation, route }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [employeeId, setEmployeeId] = useState(null);
   const operadorNombre = route.params?.operadorNombre || global.operadorNombre || 'Operador';
 
   useEffect(() => {
-    loadHistory();
+    initializeEmployee();
   }, []);
 
-  const loadHistory = async () => {
+  const initializeEmployee = async () => {
+    try {
+      // Find or create employee
+      const employee = await employeesService.findOrCreateEmployee(operadorNombre, 'Cabin Crew');
+      setEmployeeId(employee.id);
+      
+      // Load history
+      await loadHistory(employee.id);
+    } catch (error) {
+      console.error('Error initializing employee:', error);
+      Alert.alert(
+        'Error',
+        'No se pudo conectar con el servidor. Verifica que el API esté corriendo en http://localhost:5001',
+        [{ text: 'OK' }]
+      );
+      setLoading(false);
+    }
+  };
+
+  const loadHistory = async (empId) => {
     setLoading(true);
     try {
-      const data = await getOperadorHistory(operadorNombre);
-      setHistory(data);
+      const data = await restockHistoryService.getHistoryByEmployee(empId);
+      
+      // Transform API data to match UI format
+      const transformedHistory = data.map(record => {
+        const baseData = {
+          id: record.id,
+          tipo: record.action_type === 'packing' ? 'Empaque Guiado' 
+                : record.action_type === 'registration' ? 'Registro de Lote'
+                : 'Retorno Asistido',
+          fecha: new Date(record.completion_time),
+        };
+
+        if (record.action_type === 'packing') {
+          return {
+            ...baseData,
+            vuelo: `Vuelo ${record.drawer_id || 'N/A'}`,
+            destino: 'Destino',
+            tiempoEstimado: 300, // 5 minutes default
+            tiempoReal: 300,
+            eficiencia: record.efficiency_score || 100,
+          };
+        } else if (record.action_type === 'registration') {
+          return {
+            ...baseData,
+            producto: `Item #${record.item_id || 'N/A'}`,
+            cantidad: record.quantity || 0,
+            tiempoReal: 120,
+          };
+        } else {
+          return {
+            ...baseData,
+            itemsProcesados: record.quantity || 0,
+            tiempoReal: 180,
+          };
+        }
+      });
+
+      setHistory(transformedHistory);
     } catch (error) {
       console.error('Error loading history:', error);
+      Alert.alert('Error', 'No se pudo cargar el historial');
     } finally {
       setLoading(false);
     }
@@ -65,7 +122,7 @@ export default function OperadorHomeScreen({ navigation, route }) {
       {/* Tarjeta 1: Registrar Lote */}
       <TouchableOpacity 
         style={[styles.taskCard, { backgroundColor: '#3b82f6' }]} 
-        onPress={() => navigation.navigate('RegistroDeLote')}
+        onPress={() => navigation.navigate('RegistroDeLote', { employeeId, operadorNombre })}
       >
         <View style={styles.taskCardIconContainer}>
           <PlusCircle color="#ffffff" size={36} />
@@ -80,7 +137,7 @@ export default function OperadorHomeScreen({ navigation, route }) {
       {/* Tarjeta 2: Empaque Guiado */}
       <TouchableOpacity 
         style={[styles.taskCard, { backgroundColor: '#8b5cf6' }]} 
-        onPress={() => navigation.navigate('EmpaqueGuiado')}
+        onPress={() => navigation.navigate('EmpaqueGuiado', { employeeId, operadorNombre })}
       >
         <View style={styles.taskCardIconContainer}>
           <Package color="#ffffff" size={36} />
@@ -95,7 +152,7 @@ export default function OperadorHomeScreen({ navigation, route }) {
       {/* Tarjeta 3: Retorno Asistido */}
       <TouchableOpacity 
         style={[styles.taskCard, { backgroundColor: '#ec4899' }]} 
-        onPress={() => navigation.navigate('RetornoAsistido')}
+        onPress={() => navigation.navigate('RetornoAsistido', { employeeId, operadorNombre })}
       >
         <View style={styles.taskCardIconContainer}>
           <ArrowLeftRight color="#ffffff" size={36} />

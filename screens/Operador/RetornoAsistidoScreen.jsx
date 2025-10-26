@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { ScanLine, Check, X, History, Package } from 'lucide-react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { ScanLine, Check, X, History, Package, AlertTriangle } from 'lucide-react-native';
 import FeedbackModal from '../../components/FeedbackModal';
-import { processReturnedItem } from '../../api/mockapi';
+import { itemsService, restockHistoryService, drawersService, drawerStatusService } from '../../api';
 
 /**
  * Pantalla para el Paso 3: Retorno Asistido (REDISEÑADA)
@@ -16,31 +16,218 @@ import { processReturnedItem } from '../../api/mockapi';
 export default function RetornoAsistidoScreen({ navigation, route }) {
   const [scannedHistory, setScannedHistory] = useState([]);
   const [modal, setModal] = useState({ isVisible: false, type: '', message: '' });
+  const [loading, setLoading] = useState(false);
+  const [currentDrawer, setCurrentDrawer] = useState(null);
+  const [drawerItems, setDrawerItems] = useState([]);
 
-  // Simulación de escaneo (en la vida real, se navegaría al Scanner)
-  const handleScanPress = async () => {
-    // En un caso real: navigation.navigate('Scanner')
-    // Simulación:
-    const fakeLoteQR = 'LOTE-SNK01-20251020'; // Simular un lote caducado
-    const result = await processReturnedItem(fakeLoteQR);
+  // Get employee ID from route params
+  const employeeId = route.params?.employeeId;
 
-    // Actualizar historial
-    setScannedHistory(prev => [result, ...prev]);
+  // Handle QR scan from Scanner component
+  useEffect(() => {
+    if (route.params?.scannedData) {
+      handleScanResult(route.params.scannedData);
+      navigation.setParams({ scannedData: null });
+    }
+  }, [route.params?.scannedData]);
 
-    // Mostrar feedback
-    if (result.action === 'DESECHAR') {
+  // Process scanned drawer QR code
+  const handleScanResult = async (qrCode) => {
+    setLoading(true);
+    try {
+      console.log('🔍 Scanned QR Code:', qrCode);
+      
+      // Find drawer by QR code
+      const allDrawers = await drawersService.getDrawers();
+      console.log('📦 Total drawers in database:', allDrawers.length);
+      
+      // The QR code might contain either the drawer_code or the drawer UUID
+      let drawer = null;
+      
+      // Try to match by drawer_code first (exact match)
+      drawer = allDrawers.find(d => d.drawer_code === qrCode);
+      
+      // If not found, try by UUID (id field)
+      if (!drawer) {
+        drawer = allDrawers.find(d => d.id === qrCode);
+        console.log('🔍 Trying UUID match...');
+      }
+      
+      // If not found, try case-insensitive drawer_code match
+      if (!drawer) {
+        drawer = allDrawers.find(d => d.drawer_code?.toLowerCase() === qrCode?.toLowerCase());
+        console.log('🔍 Trying case-insensitive match...');
+      }
+      
+      // If still not found, try trimming whitespace
+      if (!drawer) {
+        drawer = allDrawers.find(d => 
+          d.drawer_code?.trim() === qrCode?.trim() || 
+          d.id?.trim() === qrCode?.trim()
+        );
+        console.log('🔍 Trying trimmed match...');
+      }
+      
+      if (!drawer) {
+        console.error('❌ Drawer not found. Scanned:', qrCode);
+        console.error('Available drawer codes:', 
+          allDrawers.slice(0, 5).map(d => `${d.drawer_code} (ID: ${d.id})`));
+        Alert.alert(
+          'Error', 
+          `No se encontró el cajón con el QR escaneado.\n\nQR: "${qrCode}"\n\nVerifica que el cajón existe en la base de datos.`
+        );
+        setLoading(false);
+        return;
+      }
+      
+      console.log('✅ Found drawer:', drawer.drawer_code, 'ID:', drawer.id);
+
+      console.log('✅ Found drawer:', drawer.drawer_code, 'ID:', drawer.id);
+
+      setCurrentDrawer(drawer);
+
+      // Get drawer status to find items in this drawer
+      console.log('🔍 Looking for drawer status...');
+      const drawerStatus = await drawerStatusService.getDrawerStatus(drawer.id);
+      
+      if (!drawerStatus) {
+        console.warn('⚠️ No drawer status found - drawer not loaded yet');
+        Alert.alert(
+          '⚠️ Paso 2 Requerido', 
+          `Este cajón aún no ha sido cargado.\n\nCajón: ${drawer.drawer_code}\n\n❌ Debes completar Paso 2 (Empaque Guiado) primero para cargar items en este cajón antes de poder procesarlo en Retorno Asistido.\n\n📋 Flujo correcto:\n1. Paso 1: Registro de Lote\n2. Paso 2: Empaque Guiado ← REQUERIDO\n3. Paso 3: Retorno Asistido`,
+          [{ text: 'Entendido', style: 'default' }]
+        );
+        setLoading(false);
+        return;
+      }
+      
+      console.log('✅ Found drawer status:', drawerStatus.id);
+
+      // Get all batches in this drawer
+      console.log('🔍 Getting batches in drawer...');
+      const batches = await drawerStatusService.getBatchesInDrawer(drawerStatus.id);
+      console.log('📦 Found batches:', batches?.length || 0);
+      
+      if (!batches || batches.length === 0) {
+        Alert.alert(
+          '⚠️ Cajón Vacío', 
+          `No hay artículos en este cajón.\n\nCajón: ${drawer.drawer_code}\n\n❌ Debes cargar items en Paso 2 (Empaque Guiado) antes de usar Retorno Asistido.\n\n📋 Flujo correcto:\n1. Paso 1: Registro de Lote\n2. Paso 2: Empaque Guiado ← Carga items aquí\n3. Paso 3: Retorno Asistido`,
+          [{ text: 'Entendido', style: 'default' }]
+        );
+        setLoading(false);
+        return;
+      }
+
+      // Get full item details for each batch
+      const itemsWithDetails = await Promise.all(
+        batches.map(async (batch) => {
+          const item = await itemsService.getItemById(batch.batch_id);
+          return {
+            ...item,
+            quantityInDrawer: batch.quantity_loaded, // ✅ Fixed: Use quantity_loaded from batch tracking
+            batchTrackingId: batch.id,
+            isDepleted: batch.is_depleted
+          };
+        })
+      );
+
+      setDrawerItems(itemsWithDetails);
+
+      // Process all items and check expiry dates
+      await processDrawerItems(drawer, itemsWithDetails, drawerStatus.id);
+
+    } catch (error) {
+      console.error('Error processing drawer scan:', error);
+      Alert.alert('Error', 'No se pudo procesar el cajón escaneado: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Process all items in the drawer
+  const processDrawerItems = async (drawer, items, drawerStatusId) => {
+    const now = new Date();
+    let hasExpiredItems = false;
+    let hasWarningItems = false;
+    const itemResults = [];
+
+    for (const item of items) {
+      if (item.isDepleted) continue; // Skip already depleted items
+
+      const expiryDate = new Date(item.expiry_date);
+      const isExpired = expiryDate <= now;
+      const daysUntilExpiry = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+      
+      let action = 'OK';
+      let status = 'success';
+      
+      if (isExpired) {
+        action = 'DESECHAR';
+        status = 'error';
+        hasExpiredItems = true;
+      } else if (daysUntilExpiry <= 2) {
+        action = 'CRÍTICO';
+        status = 'warning';
+        hasWarningItems = true;
+      }
+
+      const result = {
+        nombre: item.item_type,
+        loteId: item.batch_number,
+        quantity: item.quantityInDrawer,
+        action: action,
+        status: status,
+        expiryDate: expiryDate.toLocaleDateString('es-MX'),
+        daysUntilExpiry: daysUntilExpiry,
+        drawerCode: drawer.drawer_code
+      };
+
+      itemResults.push(result);
+
+      // Log return processing activity
+      if (employeeId) {
+        try {
+          await restockHistoryService.logReturnProcessing(
+            employeeId,
+            item.id,
+            item.quantityInDrawer,
+            drawer.id
+          );
+        } catch (error) {
+          console.error('Error logging return:', error);
+        }
+      }
+    }
+
+    // Update history
+    setScannedHistory(prev => [...itemResults, ...prev]);
+
+    // Show comprehensive feedback modal
+    if (hasExpiredItems) {
+      const expiredCount = itemResults.filter(r => r.action === 'DESECHAR').length;
       setModal({
         isVisible: true,
         type: 'error',
-        message: `¡LOTE CADUCADO! (${result.nombre})\n\nAcción: DESECHAR`,
+        message: `⚠️ CAJÓN CON LOTES CADUCADOS\n\nCajón: ${drawer.drawer_code}\nTotal artículos: ${itemResults.length}\n❌ Caducados: ${expiredCount}\n\nAcción: REVISAR Y DESECHAR los lotes vencidos`,
+      });
+    } else if (hasWarningItems) {
+      const warningCount = itemResults.filter(r => r.action === 'CRÍTICO').length;
+      setModal({
+        isVisible: true,
+        type: 'warning',
+        message: `⚠️ CAJÓN CON LOTES CRÍTICOS\n\nCajón: ${drawer.drawer_code}\nTotal artículos: ${itemResults.length}\n🟡 Críticos (≤2 días): ${warningCount}\n\nAcción: USAR PRONTO`,
       });
     } else {
       setModal({
         isVisible: true,
         type: 'success',
-        message: `LOTE OK (${result.nombre})\n\nAcción: Devolver a Almacén`,
+        message: `✅ CAJÓN OK\n\nCajón: ${drawer.drawer_code}\nTotal artículos: ${itemResults.length}\n\nTodos los lotes están en buen estado.\nAcción: Devolver a Almacén`,
       });
     }
+  };
+
+  const handleScanPress = () => {
+    navigation.navigate('Scanner');
   };
 
   return (
@@ -54,17 +241,42 @@ export default function RetornoAsistidoScreen({ navigation, route }) {
 
       {/* 1. Encabezado */}
       <View style={styles.header}>
-        <Text style={styles.title}>Retorno Asistido (Manual)</Text>
-        <Text style={styles.subtitle}>Escanea los artículos devueltos de cajones complejos.</Text>
+        <Text style={styles.title}>Retorno Asistido</Text>
+        <Text style={styles.subtitle}>Escanea el QR del cajón para verificar artículos devueltos.</Text>
       </View>
 
       {/* 2. Botón de Acción Principal */}
       <View style={styles.actionContainer}>
-        <TouchableOpacity style={styles.scanButton} onPress={handleScanPress}>
-          <ScanLine color="#ffffff" size={40} />
-          <Text style={styles.scanButtonText}>Escanear Artículo Devuelto</Text>
+        <TouchableOpacity 
+          style={[styles.scanButton, loading && styles.scanButtonDisabled]} 
+          onPress={handleScanPress}
+          disabled={loading}
+        >
+          {loading ? (
+            <>
+              <ActivityIndicator color="#ffffff" size="large" />
+              <Text style={styles.scanButtonText}>Procesando...</Text>
+            </>
+          ) : (
+            <>
+              <ScanLine color="#ffffff" size={40} />
+              <Text style={styles.scanButtonText}>Escanear QR del Cajón</Text>
+            </>
+          )}
         </TouchableOpacity>
       </View>
+
+      {/* Current Drawer Info */}
+      {currentDrawer && (
+        <View style={styles.currentDrawerContainer}>
+          <Package color="#3b82f6" size={24} />
+          <View style={styles.currentDrawerText}>
+            <Text style={styles.currentDrawerLabel}>Último cajón escaneado:</Text>
+            <Text style={styles.currentDrawerCode}>{currentDrawer.drawer_code}</Text>
+            <Text style={styles.currentDrawerItems}>{drawerItems.length} artículo(s) procesado(s)</Text>
+          </View>
+        </View>
+      )}
 
       {/* 3. Historial de Sesión */}
       <View style={styles.historyContainer}>
@@ -74,29 +286,41 @@ export default function RetornoAsistidoScreen({ navigation, route }) {
         </View>
         <ScrollView>
           {scannedHistory.length === 0 ? (
-            <Text style={styles.emptyText}>Aún no hay artículos escaneados.</Text>
+            <Text style={styles.emptyText}>Aún no hay cajones escaneados.</Text>
           ) : (
             scannedHistory.map((item, index) => (
               <View key={index} style={styles.historyItem}>
                 <View style={[
                   styles.historyIcon, 
-                  item.action === 'DESECHAR' ? styles.historyIconError : styles.historyIconSuccess
+                  item.status === 'error' ? styles.historyIconError : 
+                  item.status === 'warning' ? styles.historyIconWarning :
+                  styles.historyIconSuccess
                 ]}>
-                  {item.action === 'DESECHAR' ? 
+                  {item.status === 'error' ? 
                     <X color="#dc2626" size={20} /> :
+                    item.status === 'warning' ?
+                    <AlertTriangle color="#f59e0b" size={20} /> :
                     <Check color="#16a34a" size={20} />
                   }
                 </View>
                 <View style={styles.historyText}>
                   <Text style={styles.historyItemName}>{item.nombre}</Text>
-                  <Text style={styles.historyItemLote}>Lote: {item.loteId}</Text>
+                  <Text style={styles.historyItemLote}>Lote: {item.loteId} • Cajón: {item.drawerCode}</Text>
+                  <Text style={styles.historyItemExpiry}>
+                    Vence: {item.expiryDate} ({item.daysUntilExpiry > 0 ? `${item.daysUntilExpiry} días` : 'VENCIDO'})
+                  </Text>
                 </View>
-                <Text style={[
-                  styles.historyAction,
-                  item.action === 'DESECHAR' ? styles.historyActionError : styles.historyActionSuccess
-                ]}>
-                  {item.action}
-                </Text>
+                <View style={styles.historyActionContainer}>
+                  <Text style={[
+                    styles.historyAction,
+                    item.status === 'error' ? styles.historyActionError : 
+                    item.status === 'warning' ? styles.historyActionWarning :
+                    styles.historyActionSuccess
+                  ]}>
+                    {item.action}
+                  </Text>
+                  <Text style={styles.historyQuantity}>Qty: {item.quantity}</Text>
+                </View>
               </View>
             ))
           )}
@@ -142,11 +366,45 @@ const styles = StyleSheet.create({
     width: '100%',
     elevation: 3,
   },
+  scanButtonDisabled: {
+    backgroundColor: '#94a3b8',
+  },
   scanButtonText: {
     color: '#ffffff',
     fontSize: 20,
     fontWeight: 'bold',
     marginLeft: 12,
+  },
+  currentDrawerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#dbeafe',
+    padding: 16,
+    marginHorizontal: 20,
+    marginBottom: 10,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#3b82f6',
+  },
+  currentDrawerText: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  currentDrawerLabel: {
+    fontSize: 12,
+    color: '#1e40af',
+    fontWeight: '600',
+  },
+  currentDrawerCode: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1e3a8a',
+    marginTop: 2,
+  },
+  currentDrawerItems: {
+    fontSize: 12,
+    color: '#3b82f6',
+    marginTop: 2,
   },
   historyContainer: {
     flex: 1,
@@ -190,6 +448,9 @@ const styles = StyleSheet.create({
   historyIconSuccess: {
     backgroundColor: '#dcfce7',
   },
+  historyIconWarning: {
+    backgroundColor: '#fef3c7',
+  },
   historyIconError: {
     backgroundColor: '#fee2e2',
   },
@@ -204,6 +465,15 @@ const styles = StyleSheet.create({
   historyItemLote: {
     fontSize: 12,
     color: '#6b7280',
+    marginTop: 2,
+  },
+  historyItemExpiry: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  historyActionContainer: {
+    alignItems: 'flex-end',
   },
   historyAction: {
     fontSize: 14,
@@ -212,8 +482,16 @@ const styles = StyleSheet.create({
   historyActionSuccess: {
     color: '#16a34a',
   },
+  historyActionWarning: {
+    color: '#f59e0b',
+  },
   historyActionError: {
     color: '#dc2626',
+  },
+  historyQuantity: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 2,
   },
 });
 
