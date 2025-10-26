@@ -10,6 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // ... (El resto de tus imports de pantallas se mantienen igual)
 import LoginScreen from './screens/LoginScreen';
+import OperadorLoginScreen from './screens/Operador/OperadorLoginScreen';
 import OperadorHomeScreen from './screens/Operador/OperadorHomeScreen';
 import RegistroDeLoteScreen from './screens/Operador/RegistroDeLoteScreen';
 import EstacionDeEmpaqueScreen from './screens/Operador/EstacionDeEmpaqueScreen';
@@ -30,6 +31,11 @@ export default function App() {
             name="Login"
             component={LoginScreen}
             options={{ title: 'Seleccionar Perfil' }}
+          />
+          <Stack.Screen
+            name="OperadorLogin"
+            component={OperadorLoginScreen}
+            options={{ title: 'Iniciar Sesión' }}
           />
           <Stack.Screen
             name="OperadorHome"

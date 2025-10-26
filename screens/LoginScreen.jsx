@@ -9,7 +9,7 @@ import { HardHat, User } from 'lucide-react-native'; // Iconos
 export default function LoginScreen({ navigation }) {
   
   const goToOperador = () => {
-    navigation.replace('OperadorHome');
+    navigation.navigate('OperadorLogin');
   };
 
   const goToSupervisor = () => {

@@ -6,11 +6,13 @@ import {
   TouchableOpacity, 
   TextInput, 
   Platform, 
-  Modal 
+  Modal,
+  ScrollView,
+  ActivityIndicator
 } from 'react-native';
-import { QrCode, Calendar, Package, AlertTriangle, CheckCircle, X } from 'lucide-react-native';
+import { QrCode, Calendar, Package, CheckCircle, X, Save, Hash } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { getProductDetails, registerNewLote } from '../../api/mockapi';
+import { saveLoteToDatabase } from '../../api/mockapi';
 
 /**
  * Pantalla para el Paso 1: Registrar Lote (REDISEÑADA)
@@ -22,182 +24,270 @@ import { getProductDetails, registerNewLote } from '../../api/mockapi';
  * 4. Jerarquía Visual: Botones de acción grandes y claros.
  */
 export default function RegistroDeLoteScreen({ navigation, route }) {
-  // Estado para controlar el flujo del "wizard"
-  const [step, setStep] = useState(1); // 1: Escanear, 2: Llenar Datos
+  // Estado para controlar el flujo
+  const [step, setStep] = useState(1); // 1: Escanear QR, 2: Llenar Datos
 
-  // Datos del formulario
-  const [scannedProduct, setScannedProduct] = useState(null); // { ean: '...', nombre: '...' }
+  // Datos del formulario (inicialmente vacíos)
+  const [qrCode, setQrCode] = useState('');
+  const [objectName, setObjectName] = useState('');
+  const [loteID, setLoteID] = useState('');
+  const [fechaCaducidad, setFechaCaducidad] = useState(new Date());
   const [cantidad, setCantidad] = useState('');
-  const [fecha, setFecha] = useState(new Date());
   
   // Controles de UI
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [alert, setAlert] = useState({ visible: false, type: '', message: '' });
+  const [saving, setSaving] = useState(false);
+  const [successModal, setSuccessModal] = useState(false);
 
-  // 1. Hook para recibir el EAN escaneado
+  // 1. Hook para recibir el QR code escaneado
   useEffect(() => {
     if (route.params?.scannedData) {
-      const ean = route.params.scannedData;
-      handleProductScanned(ean);
+      const scannedQR = route.params.scannedData;
+      handleQRScanned(scannedQR);
     }
   }, [route.params?.scannedData]);
 
-  // 2. Lógica al escanear
-  const handleProductScanned = async (ean) => {
-    // Simular búsqueda del producto en la API
-    const product = await getProductDetails(ean);
-    if (product) {
-      setScannedProduct(product);
-      setStep(2); // Avanzar al siguiente paso
-      navigation.setParams({ scannedData: null }); // Limpiar params
-    } else {
-      setAlert({ visible: true, type: 'error', message: 'Producto no encontrado' });
-    }
+  // 2. Lógica al escanear el QR
+  const handleQRScanned = (scannedQR) => {
+    setQrCode(scannedQR);
+    setStep(2); // Avanzar al formulario
+    navigation.setParams({ scannedData: null }); // Limpiar params
   };
 
   // 3. Lógica para el selector de fecha
   const onDateChange = (event, selectedDate) => {
-    const currentDate = selectedDate || fecha;
-    setShowDatePicker(Platform.OS === 'ios'); // En iOS se queda abierto
-    setFecha(currentDate);
+    const currentDate = selectedDate || fechaCaducidad;
+    setShowDatePicker(Platform.OS === 'ios');
+    setFechaCaducidad(currentDate);
   };
 
-  // 4. Lógica de registro final
-  const handleRegisterLote = async () => {
-    if (!cantidad || !fecha || !scannedProduct) {
-      setAlert({ visible: true, type: 'error', message: 'Completa todos los campos' });
+  // 4. Validar y guardar en la base de datos
+  const handleSaveLote = async () => {
+    // Validación
+    if (!objectName.trim()) {
+      alert('Por favor ingresa el nombre del producto');
+      return;
+    }
+    if (!loteID.trim()) {
+      alert('Por favor ingresa el ID del lote');
+      return;
+    }
+    if (!cantidad.trim() || isNaN(cantidad)) {
+      alert('Por favor ingresa una cantidad válida');
       return;
     }
 
-    // Simular envío a la API
-    const result = await registerNewLote(scannedProduct.ean, cantidad, fecha);
-    if (result.status === 'success') {
-      setAlert({ visible: true, type: 'success', message: '¡Lote registrado con éxito!' });
-      // Resetear el flujo
-      resetFlow();
-    } else {
-      setAlert({ visible: true, type: 'error', message: result.message });
+    setSaving(true);
+    
+    try {
+      // Guardar en la base de datos
+      const loteData = {
+        QR_code: qrCode,
+        Object_name: objectName.trim(),
+        LoteID: loteID.trim(),
+        Fecha_de_caducidad: fechaCaducidad.toISOString(),
+        Cantidad: parseInt(cantidad),
+      };
+
+      const result = await saveLoteToDatabase(loteData);
+      
+      if (result.status === 'success') {
+        setSaving(false);
+        setSuccessModal(true);
+        // Auto-cerrar después de 2 segundos
+        setTimeout(() => {
+          resetFlow();
+          navigation.goBack();
+        }, 2000);
+      } else {
+        setSaving(false);
+        alert('Error al guardar: ' + result.message);
+      }
+    } catch (error) {
+      setSaving(false);
+      alert('Error al guardar el lote');
+      console.error(error);
     }
   };
 
   // 5. Resetear la pantalla al estado inicial
   const resetFlow = () => {
     setStep(1);
-    setScannedProduct(null);
+    setQrCode('');
+    setObjectName('');
+    setLoteID('');
     setCantidad('');
-    setFecha(new Date());
-    setAlert({ visible: false, type: '', message: '' });
-  };
-  
-  const closeAlert = () => {
-    setAlert({ visible: false, type: '', message: '' });
+    setFechaCaducidad(new Date());
+    setSuccessModal(false);
   };
 
   return (
     <View style={styles.container}>
       
-      {/* --- MODAL DE ALERTA --- */}
+      {/* --- MODAL DE ÉXITO --- */}
       <Modal
         transparent={true}
         animationType="fade"
-        visible={alert.visible}
-        onRequestClose={closeAlert}
+        visible={successModal}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.alertBox, 
-            alert.type === 'success' ? styles.alertSuccess : styles.alertError
-          ]}>
-            {alert.type === 'success' && <CheckCircle color="#ffffff" size={60} />}
-            {alert.type === 'error' && <AlertTriangle color="#ffffff" size={60} />}
-            <Text style={styles.alertText}>{alert.message}</Text>
-            <TouchableOpacity style={styles.closeButton} onPress={closeAlert}>
-              <X color="#ffffff" size={20} />
-            </TouchableOpacity>
+          <View style={styles.successModalContent}>
+            <CheckCircle size={64} color="#16a34a" />
+            <Text style={styles.successModalTitle}>¡Lote guardado!</Text>
+            <Text style={styles.successModalText}>
+              Los datos se han actualizado correctamente en la base de datos
+            </Text>
           </View>
         </View>
       </Modal>
 
-      {/* --- SELECTOR DE FECHA (MODAL) --- */}
-      {showDatePicker && (
-        <DateTimePicker
-          testID="dateTimePicker"
-          value={fecha}
-          mode="date"
-          display="spinner" // Un spinner es más fácil de usar con guantes
-          onChange={onDateChange}
-        />
-      )}
-      
-      {/* --- PASO 1: PANTALLA DE ESCANEO --- */}
+      {/* --- STEP 1: ESCANEAR QR --- */}
       {step === 1 && (
         <View style={styles.stepContainer}>
-          <Text style={styles.title}>Registrar Nuevo Lote</Text>
-          <Text style={styles.subtitle}>Comienza escaneando el código de barras (EAN/UPC) de la caja del producto.</Text>
-          
-          <View style={styles.iconContainer}>
-            <QrCode size={120} color="#3b82f6" />
+          <View style={styles.iconCircle}>
+            <QrCode size={48} color="#3b82f6" />
           </View>
+          
+          <Text style={styles.title}>Escanear Código QR</Text>
+          <Text style={styles.subtitle}>
+            Escanea el código QR del registro para comenzar
+          </Text>
 
           <TouchableOpacity 
-            style={styles.primaryButton} 
+            style={styles.scanButton}
             onPress={() => navigation.navigate('Scanner')}
           >
-            <Text style={styles.primaryButtonText}>Escanear Producto</Text>
+            <QrCode size={24} color="white" />
+            <Text style={styles.scanButtonText}>Escanear QR</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* --- PASO 2: PANTALLA DE DATOS --- */}
+      {/* --- STEP 2: LLENAR FORMULARIO --- */}
       {step === 2 && (
-        <View style={styles.stepContainer}>
-          <Text style={styles.title}>Paso 2: Ingresar Datos</Text>
-          <Text style={styles.subtitle}>Ingresa la cantidad y la fecha de caducidad del lote.</Text>
-
-          {/* Tarjeta de Producto Escaneado */}
-          <View style={styles.productCard}>
-            <Package color="#16a34a" size={30} />
-            <View style={styles.productInfo}>
-              <Text style={styles.productName}>{scannedProduct.nombre}</Text>
-              <Text style={styles.productEan}>EAN: {scannedProduct.ean}</Text>
-            </View>
-          </View>
-
-          {/* Formulario */}
-          <View style={styles.form}>
-            <Text style={styles.label}>Cantidad en el Lote</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Ej: 150"
-              keyboardType="numeric"
-              value={cantidad}
-              onChangeText={setCantidad}
-            />
-
-            <Text style={styles.label}>Fecha de Caducidad</Text>
-            <TouchableOpacity 
-              style={styles.datePickerButton} 
-              onPress={() => setShowDatePicker(true)}
-            >
-              <Calendar color="#3b82f6" size={20} style={{ marginRight: 10 }} />
-              <Text style={styles.datePickerText}>
-                {fecha.toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })}
+        <ScrollView style={styles.formScrollView}>
+          <View style={styles.formContainer}>
+            
+            {/* Título */}
+            <View style={styles.formHeader}>
+              <Package size={32} color="#3b82f6" />
+              <Text style={styles.formTitle}>Registrar Información del Lote</Text>
+              <Text style={styles.formSubtitle}>
+                Completa todos los campos para actualizar la base de datos
               </Text>
-            </TouchableOpacity>
-          </View>
+            </View>
 
-          <TouchableOpacity 
-            style={styles.primaryButton} 
-            onPress={handleRegisterLote}
-          >
-            <Text style={styles.primaryButtonText}>Registrar Lote</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.secondaryButton} 
-            onPress={resetFlow} // Botón para cancelar y escanear otro
-          >
-            <Text style={styles.secondaryButtonText}>Cancelar</Text>
-          </TouchableOpacity>
-        </View>
+            {/* Campo: QR Code (solo lectura) */}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>Código QR</Text>
+              <View style={styles.readOnlyField}>
+                <QrCode size={20} color="#64748b" />
+                <Text style={styles.readOnlyText}>{qrCode}</Text>
+              </View>
+            </View>
+
+            {/* Campo: Nombre del Producto */}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>Nombre del Producto *</Text>
+              <View style={styles.inputWrapper}>
+                <Package size={20} color="#64748b" />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Ej: Manzanas Gala"
+                  value={objectName}
+                  onChangeText={setObjectName}
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
+            </View>
+
+            {/* Campo: ID del Lote */}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>ID del Lote *</Text>
+              <View style={styles.inputWrapper}>
+                <Hash size={20} color="#64748b" />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Ej: LOTE-2025-001"
+                  value={loteID}
+                  onChangeText={setLoteID}
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
+            </View>
+
+            {/* Campo: Cantidad */}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>Cantidad *</Text>
+              <View style={styles.inputWrapper}>
+                <Package size={20} color="#64748b" />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Ej: 50"
+                  keyboardType="numeric"
+                  value={cantidad}
+                  onChangeText={setCantidad}
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
+            </View>
+
+            {/* Campo: Fecha de Caducidad */}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>Fecha de Caducidad *</Text>
+              <TouchableOpacity 
+                style={styles.dateButton}
+                onPress={() => setShowDatePicker(true)}
+              >
+                <Calendar size={20} color="#64748b" />
+                <Text style={styles.dateText}>
+                  {fechaCaducidad.toLocaleDateString('es-MX', { 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  })}
+                </Text>
+              </TouchableOpacity>
+              
+              {showDatePicker && (
+                <DateTimePicker
+                  value={fechaCaducidad}
+                  mode="date"
+                  display="default"
+                  onChange={onDateChange}
+                  minimumDate={new Date()}
+                />
+              )}
+            </View>
+
+            {/* Botones de acción */}
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={resetFlow}
+              >
+                <X size={20} color="#64748b" />
+                <Text style={styles.cancelButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+                onPress={handleSaveLote}
+                disabled={saving}
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <>
+                    <Save size={20} color="white" />
+                    <Text style={styles.saveButtonText}>Guardar</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </ScrollView>
       )}
 
     </View>
@@ -208,152 +298,214 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
-    padding: 20,
   },
+
+  // --- STEP 1: ESCANEAR ---
   stepContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 24,
+  },
+  iconCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: '#e0f2fe',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 32,
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#111827',
+    color: '#1e293b',
+    marginBottom: 12,
     textAlign: 'center',
-    marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    color: '#6b7280',
-    textAlign: 'center',
+    color: '#64748b',
     marginBottom: 32,
-    maxWidth: '90%',
+    textAlign: 'center',
+    paddingHorizontal: 24,
   },
-  iconContainer: {
-    width: 200,
-    height: 200,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#eff6ff',
-    borderRadius: 100,
-    marginBottom: 40,
-  },
-  primaryButton: {
+  scanButton: {
     backgroundColor: '#3b82f6',
-    paddingVertical: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 12,
-    width: '100%',
-    alignItems: 'center',
-    elevation: 3,
+    gap: 12,
+    shadowColor: '#3b82f6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  primaryButtonText: {
-    color: '#ffffff',
+  scanButtonText: {
     fontSize: 18,
-    fontWeight: 'bold',
-  },
-  secondaryButton: {
-    marginTop: 12,
-  },
-  secondaryButtonText: {
-    color: '#6b7280',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  
-  // Estilos del Paso 2
-  productCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    width: '100%',
-    borderColor: '#e5e7eb',
-    borderWidth: 1,
-  },
-  productInfo: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  productName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#111827',
-  },
-  productEan: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  form: {
-    width: '100%',
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#4b5563',
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: '#ffffff',
-    borderColor: '#d1d5db',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 16,
-    fontSize: 16,
-    marginBottom: 16,
-    width: '100%',
-  },
-  datePickerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#d1d5db',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 16,
-    width: '100%',
-  },
-  datePickerText: {
-    fontSize: 16,
-    color: '#111827',
+    fontWeight: '600',
+    color: 'white',
   },
 
-  // Estilos del Modal de Alerta
-  modalOverlay: {
+  // --- STEP 2: FORMULARIO ---
+  formScrollView: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
+  },
+  formContainer: {
+    padding: 24,
+  },
+  formHeader: {
     alignItems: 'center',
-    padding: 20,
+    marginBottom: 32,
   },
-  alertBox: {
-    width: '100%',
-    padding: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    position: 'relative',
-  },
-  alertSuccess: {
-    backgroundColor: '#16a34a', // Verde
-  },
-  alertError: {
-    backgroundColor: '#dc2626', // Rojo
-  },
-  alertText: {
+  formTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: 'white',
+    color: '#1e293b',
+    marginTop: 12,
     textAlign: 'center',
-    marginTop: 16,
   },
-  closeButton: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    padding: 5,
+  formSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+
+  // --- CAMPOS ---
+  fieldContainer: {
+    marginBottom: 24,
+  },
+  fieldLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 8,
+  },
+  readOnlyField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    padding: 16,
+    borderRadius: 12,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  readOnlyText: {
+    fontSize: 16,
+    color: '#64748b',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  input: {
+    flex: 1,
+    fontSize: 16,
+    color: '#1e293b',
+    paddingVertical: 16,
+  },
+  dateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+  },
+  dateText: {
+    fontSize: 16,
+    color: '#1e293b',
+  },
+
+  // --- BOTONES ---
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 32,
+  },
+  cancelButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'white',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  saveButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#16a34a',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#94a3b8',
+    shadowOpacity: 0,
+  },
+  saveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'white',
+  },
+
+  // --- MODAL DE ÉXITO ---
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  successModalContent: {
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    maxWidth: 320,
+    width: '100%',
+  },
+  successModalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#16a34a',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  successModalText: {
+    fontSize: 16,
+    color: '#64748b',
+    textAlign: 'center',
   },
 });
 

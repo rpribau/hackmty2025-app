@@ -209,6 +209,124 @@ export const registerNewLote = async (ean, cantidad, fechaCaducidad) => {
 
 
 /**
+ * (Operador) Obtiene el historial de actividades del operador
+ */
+export const getOperadorHistory = async (operadorNombre) => {
+  await delay(400);
+  
+  // Datos simulados de historial
+  const history = [
+    {
+      id: 'ACT-001',
+      tipo: 'Empaque Guiado',
+      vuelo: 'LX721',
+      destino: 'ZRH-JFK',
+      tiempoEstimado: 480, // 8 minutos
+      tiempoReal: 455, // 7:35 minutos
+      eficiencia: 105.5, // (480/455) * 100
+      fecha: new Date(Date.now() - 2 * 60 * 60 * 1000), // Hace 2 horas
+      estado: 'completed',
+    },
+    {
+      id: 'ACT-002',
+      tipo: 'Registro de Lote',
+      producto: 'Snack Box Economy',
+      cantidad: 150,
+      tiempoReal: 180, // 3 minutos
+      fecha: new Date(Date.now() - 4 * 60 * 60 * 1000), // Hace 4 horas
+      estado: 'completed',
+    },
+    {
+      id: 'ACT-003',
+      tipo: 'Empaque Guiado',
+      vuelo: 'LX518',
+      destino: 'GVA-LHR',
+      tiempoEstimado: 420,
+      tiempoReal: 495, // Tardó más
+      eficiencia: 84.8,
+      fecha: new Date(Date.now() - 6 * 60 * 60 * 1000), // Hace 6 horas
+      estado: 'completed',
+    },
+    {
+      id: 'ACT-004',
+      tipo: 'Retorno Asistido',
+      itemsProcesados: 24,
+      tiempoReal: 360, // 6 minutos
+      fecha: new Date(Date.now() - 8 * 60 * 60 * 1000), // Hace 8 horas
+      estado: 'completed',
+    },
+    {
+      id: 'ACT-005',
+      tipo: 'Empaque Guiado',
+      vuelo: 'LX322',
+      destino: 'ZRH-BCN',
+      tiempoEstimado: 360,
+      tiempoReal: 342,
+      eficiencia: 105.3,
+      fecha: new Date(Date.now() - 24 * 60 * 60 * 1000), // Hace 1 día
+      estado: 'completed',
+    },
+  ];
+  
+  return history;
+};
+
+/**
+ * (Operador) Registra una nueva actividad completada
+ */
+export const saveActivity = async (activityData) => {
+  await delay(300);
+  
+  console.log('💾 Guardando actividad:', activityData);
+  
+  return {
+    status: 'success',
+    message: 'Actividad registrada correctamente',
+    activityId: `ACT-${Date.now()}`,
+  };
+};
+
+/**
+ * (Operador) Guarda un lote completo en la base de datos
+ * Recibe los campos: QR_code, Object_name, LoteID, Fecha_de_caducidad, Cantidad
+ */
+export const saveLoteToDatabase = async (loteData) => {
+  await delay(500);
+  
+  // Validaciones
+  if (!loteData.QR_code || !loteData.Object_name || !loteData.LoteID || 
+      !loteData.Fecha_de_caducidad || !loteData.Cantidad) {
+    return {
+      status: 'error',
+      message: 'Todos los campos son obligatorios'
+    };
+  }
+  
+  if (loteData.Cantidad <= 0) {
+    return {
+      status: 'error',
+      message: 'La cantidad debe ser mayor a 0'
+    };
+  }
+  
+  // Simular actualización en base de datos
+  console.log('📦 Guardando lote en la base de datos:', {
+    QR_code: loteData.QR_code,
+    Object_name: loteData.Object_name,
+    LoteID: loteData.LoteID,
+    Fecha_de_caducidad: loteData.Fecha_de_caducidad,
+    Cantidad: loteData.Cantidad,
+    timestamp: new Date().toISOString()
+  });
+  
+  return {
+    status: 'success',
+    message: 'Lote guardado correctamente en la base de datos',
+    recordId: loteData.QR_code
+  };
+};
+
+/**
  * (Supervisor) Obtiene todos los datos de los dashboards.
  */
 export const getDashboardData = async () => {
