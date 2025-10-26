@@ -80,7 +80,7 @@ export default function OperadorHomeScreen({ navigation, route }) {
       {/* Tarjeta 2: Empaque Guiado */}
       <TouchableOpacity 
         style={[styles.taskCard, { backgroundColor: '#8b5cf6' }]} 
-        onPress={() => navigation.navigate('EstacionDeEmpaque')}
+        onPress={() => navigation.navigate('EmpaqueGuiado')}
       >
         <View style={styles.taskCardIconContainer}>
           <Package color="#ffffff" size={36} />

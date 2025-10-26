@@ -14,6 +14,7 @@ import OperadorLoginScreen from './screens/Operador/OperadorLoginScreen';
 import OperadorHomeScreen from './screens/Operador/OperadorHomeScreen';
 import RegistroDeLoteScreen from './screens/Operador/RegistroDeLoteScreen';
 import EstacionDeEmpaqueScreen from './screens/Operador/EstacionDeEmpaqueScreen';
+import EmpaqueGuiadoScreen from './screens/Operador/EmpaqueGuiadoScreen';
 import RetornoAsistidoScreen from './screens/Operador/RetornoAsistidoScreen';
 import SupervisorTabNavigator from './screens/Supervisor/SupervisorTabNavigator';
 import ScannerComponent from './components/ScannerComponent';
@@ -50,6 +51,11 @@ export default function App() {
           <Stack.Screen
             name="EstacionDeEmpaque"
             component={EstacionDeEmpaqueScreen}
+            options={{ title: 'Paso 2: Empaque Guiado (3D)' }}
+          />
+          <Stack.Screen
+            name="EmpaqueGuiado"
+            component={EmpaqueGuiadoScreen}
             options={{ title: 'Paso 2: Empaque Guiado' }}
           />
           <Stack.Screen

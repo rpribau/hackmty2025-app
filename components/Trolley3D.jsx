@@ -179,7 +179,7 @@ function TrolleyModel() {
   );
 }
 
-function Trolley3D({ drawerStates, isFullscreen }) {
+function Trolley3D({ cajones, drawerStates, isFullscreen }) {
   const groupRef = useRef();
 
   useFrame((_state, delta) => {
@@ -188,10 +188,18 @@ function Trolley3D({ drawerStates, isFullscreen }) {
     }
   });
 
+  // Convert cajones array to drawerStates object for compatibility
+  const effectiveDrawerStates = cajones 
+    ? cajones.reduce((acc, cajon) => {
+        acc[cajon.id] = cajon.status;
+        return acc;
+      }, {})
+    : drawerStates || {};
+
   // Log para debugging - ver los estados
   useEffect(() => {
-    console.log('🎨 Drawer states updated:', drawerStates);
-  }, [drawerStates]);
+    console.log('🎨 Drawer states updated:', effectiveDrawerStates);
+  }, [cajones, drawerStates]);
 
   return (
     <>
@@ -207,9 +215,9 @@ function Trolley3D({ drawerStates, isFullscreen }) {
       
       <group ref={groupRef} dispose={null} position={[0, -0.8, 0]}> 
         <TrolleyModel /> 
-        {Object.keys(drawerStates).map((drawerId, index) => {
+        {Object.keys(effectiveDrawerStates).map((drawerId, index) => {
           if (index < drawerPositions.length) {
-            const drawerStatus = drawerStates[drawerId];
+            const drawerStatus = effectiveDrawerStates[drawerId];
             console.log(`Rendering drawer ${drawerId} at index ${index} with status: ${drawerStatus}`);
             return (
               <Drawer
